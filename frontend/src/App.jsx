@@ -4,12 +4,12 @@ import WeatherWidget from "./components/WeatherWidget";
 import ChatBox from "./components/ChatBox";
 import MapView from "./components/MapView";
 import Preferences from "./components/Preferences";
-import axios from "axios";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Navigation from "./components/Navigation";
+import OnboardingPreferences from "./components/OnboardingPreferences";
+import Signup from "./components/Signup";
 
-// 		위치 권한을 받아 위도·경도 저장
-//		날씨 위젯, 카카오맵, 취향 저장 버튼, AI 채팅창 표시
+// 음식 추천 서비스 메인 페이지
 
 const Container = styled.div`
   display: flex;
@@ -56,6 +56,8 @@ export default function App() {
           />
           <Route path="/preferences" element={<Preferences />} />
           <Route path="/chat" element={<ChatBox />} />
+          <Route path="/signup" element={<Signup/>} />
+          <Route path="/onboarding" element={<OnboardingPreferences/>} />
         </Routes>
       </Container>
     </BrowserRouter>

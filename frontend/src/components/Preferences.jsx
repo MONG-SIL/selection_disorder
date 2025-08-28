@@ -1,8 +1,111 @@
+import { useState, useEffect } from "react";
+import axios from "axios";
+
 export default function Preferences() {
+  const [preferences, setPreferences] = useState([null]);
+  const [newFood, setNewFood] = useState("");
+  const [newRating, setNewRating] = useState(3);
+
+  // 기존에 저장된 취향 불러오기
+const fetchPreferences = async () => {
+  try {
+    const res = await axios.get("http://localhost:4000/api/user/preferences");
+    console.log("백엔드 응답:", res.data); // 디버깅용 로그
+    setPreferences(res.data);
+  } catch (err) {
+    console.error("취향 불러오기 실패:", err);
+  }
+};
+
+  useEffect(() => {// 페이지가 처음 렌더링될 때 사용자 취향 불러옴
+    fetchPreferences();
+  }, []);
+
+  // 음식 평점 변경 시 상태 업데이트
+  const handleRatingChange = (index, rating) => {
+    const updated = [...preferences];
+    updated[index].rating = rating;
+    setPreferences(updated);
+  };
+
+  // 취향 저장 (기존 음식 → PUT)
+  const handleSave = async (food, rating) => {
+    try {
+      await axios.put("/api/user/preferences", { food, rating });
+      alert(`${food} 저장됨`);
+    } catch (err) {
+      console.error("취향 저장 실패:", err);
+    }
+  };
+
+  // 취향 삭제
+  const handleDelete = async (food) => {
+    try {
+      await axios.delete("/api/user/preferences", { data: { food } });
+      setPreferences(preferences.filter((p) => p.food !== food));
+    } catch (err) {
+      console.error("취향 삭제 실패:", err);
+    }
+  };
+
+  // 새로운 음식 취향 추가 (POST)
+  const handleAddNewPreference = async () => {
+    try {
+      await axios.post("/api/user/preferences", { food: newFood, rating: newRating });
+      setPreferences([...preferences, { food: newFood, rating: newRating }]);
+      setNewFood("");
+      setNewRating(3);
+    } catch (err) {
+      console.error("새 취향 추가 실패:", err);
+    }
+  };
+
   return (
     <div>
       <h2>Preferences Page</h2>
       <p>여기에 사용자 취향 설정 UI가 들어갑니다.</p>
+
+      <div>
+        <h3>기존 취향</h3>
+        {preferences.map((pref, index) => (
+          <div key={pref.food}>
+            <span>{pref.food}</span>
+            <select
+              value={pref.rating}
+              onChange={(e) => handleRatingChange(index, parseInt(e.target.value))}
+            >
+              {[1, 2, 3, 4, 5].map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+            <button onClick={() => handleSave(pref.food, pref.rating)}>저장</button>
+            <button onClick={() => handleDelete(pref.food)}>삭제</button>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: "1rem" }}>
+        <h3>새 음식 추가</h3>
+        <input
+          type="text"
+          placeholder="음식 이름"
+          value={newFood}
+          onChange={(e) => setNewFood(e.target.value)}
+        />
+        <select
+          value={newRating}
+          onChange={(e) => setNewRating(parseInt(e.target.value))}
+        >
+          {[1, 2, 3, 4, 5].map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        <button onClick={handleAddNewPreference}>추가</button>
+      </div>
     </div>
   );
 }

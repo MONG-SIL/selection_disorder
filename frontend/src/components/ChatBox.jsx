@@ -1,23 +1,28 @@
 import { useState } from "react";
 import axios from "axios";
 
-// 사용자 입력 → /api/chat 호출
-// 대화창 UI로 user / AI 메시지 표시
-
-export default function ChatBox() {
+export default function ChatBox({ userId }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
 
   const sendMessage = async () => {
     if (!input.trim()) return;
+
     const userMessage = { role: "user", content: input };
-    setMessages([...messages, userMessage]);
+    setMessages(prev => [...prev, userMessage]);
 
-    const res = await axios.post("http://localhost:4000/api/chat", { message: input });
-    const aiMessage = { role: "assistant", content: res.data.reply };
+    try {
+      const res = await axios.post("http://localhost:4000/api/chat", {
+        message: input,
+        userId, // 사용자 식별
+      });
 
-    setMessages(prev => [...prev, userMessage, aiMessage]);
-    setInput("");
+      const aiMessage = { role: "assistant", content: res.data.reply };
+      setMessages(prev => [...prev, aiMessage]);
+      setInput("");
+    } catch (err) {
+      console.error("GPT 호출 실패:", err);
+    }
   };
 
   return (

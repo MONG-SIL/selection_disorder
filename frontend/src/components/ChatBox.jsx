@@ -2,6 +2,7 @@ import { useState } from "react";
 import axios from "axios";
 
 export default function ChatBox({ userId }) {
+  
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
 

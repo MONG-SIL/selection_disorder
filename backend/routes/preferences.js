@@ -1,56 +1,63 @@
 import express from "express";
 const router = express.Router();
 
-// 임시 데이터 (DB 연결 전 테스트용)
 let preferencesDB = {}; // userId별로 저장
 
-// GET /api/user/preferences?userId=xxx → 취향 불러오기
+// GET /api/user/preferences?userId=xxx
 router.get("/", (req, res) => {
   const { userId } = req.query;
-  console.log("GET 요청 userId:", userId);
-  console.log("현재 preferencesDB:", preferencesDB);
   if (!userId || !preferencesDB[userId]) {
     return res.status(404).json({ success: false, message: "No preferences found" });
   }
   res.json(preferencesDB[userId]);
 });
 
-// POST /api/user/preferences → 취향 저장 (온보딩)
+// POST /api/user/preferences (전체 취향 저장/덮어쓰기)
 router.post("/", (req, res) => {
-  const { userId, categories, ratings, customFoods } = req.body;
-  if (!userId || !categories || !ratings || !customFoods) {
-    return res.status(400).json({ success: false, message: "Invalid data" });
+  const { userId, categories = [], ratings = {}, customFoods = [] } = req.body;
+  if (!userId) {
+    return res.status(400).json({ success: false, message: "userId is required" });
   }
   preferencesDB[userId] = { categories, ratings, customFoods };
   res.json({ success: true, preferences: preferencesDB[userId] });
 });
 
-// PUT /api/user/preferences → 취향 수정
+// PUT /api/user/preferences (음식 평점만 수정)
 router.put("/", (req, res) => {
-  const { userId, food, rating } = req.body;
-  if (!userId || !food || rating === undefined || rating === null) {
-    return res.status(400).json({ success: false, message: "Invalid data" });
+  const { userId, foodId, rating } = req.body;
+  if (!userId || !foodId || rating === undefined || rating === null) {
+    return res.status(400).json({ success: false, message: "userId, foodId, rating required" });
   }
   if (!preferencesDB[userId]) {
     return res.status(404).json({ success: false, message: "User preferences not found" });
   }
-  // ratings 수정
-  preferencesDB[userId].ratings[food] = rating;
-  res.json({ success: true, preferences: preferencesDB[userId] });
+
+  if (
+    preferencesDB[userId].ratings[foodId] &&
+    typeof preferencesDB[userId].ratings[foodId] === "object"
+  ) {
+    preferencesDB[userId].ratings[foodId].rating = rating;
+    res.json({ success: true, preferences: preferencesDB[userId] });
+  } else {
+    return res.status(404).json({ success: false, message: "Food not found in preferences" });
+  }
 });
 
-// DELETE /api/user/preferences → 취향 삭제
+// DELETE /api/user/preferences (음식 취향 삭제)
 router.delete("/", (req, res) => {
-  const { userId, food } = req.body;
-  if (!userId || !food) {
-    return res.status(400).json({ success: false, message: "Invalid data" });
+  const { userId, foodId } = req.body;
+  if (!userId || !foodId) {
+    return res.status(400).json({ success: false, message: "userId, foodId required" });
   }
   if (!preferencesDB[userId]) {
     return res.status(404).json({ success: false, message: "User preferences not found" });
   }
-  // ratings에서 삭제
-  delete preferencesDB[userId].ratings[food];
-  res.json({ success: true, preferences: preferencesDB[userId] });
+  if (preferencesDB[userId].ratings[foodId]) {
+    delete preferencesDB[userId].ratings[foodId];
+    res.json({ success: true, preferences: preferencesDB[userId] });
+  } else {
+    return res.status(404).json({ success: false, message: "Food not found in preferences" });
+  }
 });
 
 export default router;

@@ -4,6 +4,7 @@ import weatherRoutes from "./routes/weather.js";
 import preferencesRoutes from "./routes/preferences.js";
 import userRoutes from "./routes/user.js";
 import chatRoutes from "./routes/chat.js";
+import foodRoutes from "./routes/food.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 
@@ -24,6 +25,7 @@ app.use("/api/weather", weatherRoutes);
 app.use("/api/user/preferences", preferencesRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api/food", foodRoutes);
 
 
 

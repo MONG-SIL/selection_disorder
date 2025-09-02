@@ -1,10 +1,85 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import styled from "styled-components";
 import axios from "axios";
+import StarRating from "./StarRating";
+import { getAllFoods } from "../services/foodApi";
+
+const Container = styled.div`
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+`;
+
+const Section = styled.div`
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+`;
+
+const Row = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px dashed #f1f5f9;
+  &:last-child { border-bottom: none; }
+`;
+
+const Controls = styled.div`
+  display: flex;
+  gap: 0.5rem;
+`;
+
+const Select = styled.select`
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.375rem 0.5rem;
+`;
+
+const Input = styled.input`
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+`;
+
+const Button = styled.button`
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+`;
+
+const FilterBar = styled.div`
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+`;
+
+const FilterButton = styled.button`
+  padding: 0.375rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid ${props => props.$active ? '#2563eb' : '#cbd5e1'};
+  background: ${props => props.$active ? '#2563eb' : '#fff'};
+  color: ${props => props.$active ? '#fff' : '#0f172a'};
+`;
 
 export default function Preferences() {
   const [preferences, setPreferences] = useState({ ratings: {}, categories: [], customFoods: [] });
   const [newFood, setNewFood] = useState("");
   const [newRating, setNewRating] = useState(3);
+  const [hasPreferences, setHasPreferences] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState('전체');
+  const [localTags, setLocalTags] = useState([]);
+  const [newTag, setNewTag] = useState("");
+  const [allTags, setAllTags] = useState([]);
+  const [tagSearch, setTagSearch] = useState("");
+  const navigate = useNavigate();
 
   const userId = "user123"; // userId 고정
 
@@ -14,12 +89,45 @@ export default function Preferences() {
       const res = await axios.get("http://localhost:4000/api/user/preferences", {
         params: { userId },
       });
-      console.log("백엔드 응답:", res.data);
+      console.log("[client] GET /api/user/preferences resp:", res.data);
       setPreferences(res.data);
+      setLocalTags(Array.isArray(res.data.tags) ? res.data.tags : []);
+      setHasPreferences(true);
     } catch (err) {
-      console.error("취향 불러오기 실패:", err);
+      if (err.response?.status === 404) {
+        console.log("사용자 취향 데이터가 없습니다. 온보딩으로 이동합니다.");
+        // 취향 데이터가 없으면 온보딩으로 리다이렉트
+        navigate('/onboarding');
+      } else {
+        console.error("취향 불러오기 실패:", err);
+      }
     }
   };
+
+  // 모든 음식의 태그를 수집해 태그 라이브러리 구성
+  useEffect(() => {
+    const loadTags = async () => {
+      try {
+        const res = await getAllFoods({ available: true });
+        const tagCount = {};
+        (res.data || []).forEach(food => {
+          if (Array.isArray(food.tags)) {
+            food.tags.forEach(t => {
+              const key = String(t).toLowerCase();
+              tagCount[key] = (tagCount[key] || 0) + 1;
+            });
+          }
+        });
+        const sorted = Object.entries(tagCount)
+          .sort((a,b) => b[1] - a[1])
+          .map(([t]) => t);
+        setAllTags(sorted);
+      } catch (e) {
+        console.error("태그 라이브러리 로드 실패:", e);
+      }
+    };
+    loadTags();
+  }, []);
 
   useEffect(() => {
     fetchPreferences();
@@ -45,8 +153,9 @@ const handleSave = async (foodId) => {
       foodId,
       rating,
     };
-    console.log("PUT 요청 데이터:", requestData); // 요청 데이터 콘솔 출력
-    await axios.put("http://localhost:4000/api/user/preferences", requestData);
+    console.log("[client] PUT /api/user/preferences req:", requestData);
+    const res = await axios.put("http://localhost:4000/api/user/preferences", requestData);
+    console.log("[client] PUT /api/user/preferences resp:", res.data);
     fetchPreferences();
   } catch (err) {
     console.error("취향 저장 실패:", err);
@@ -62,6 +171,39 @@ const handleSave = async (foodId) => {
       fetchPreferences();
     } catch (err) {
       console.error("취향 삭제 실패:", err);
+    }
+  };
+
+  // 태그 추가/삭제/저장
+  const handleAddTag = () => {
+    const t = newTag.trim();
+    if (!t) return;
+    if (localTags.includes(t)) return;
+    setLocalTags([...localTags, t]);
+    setNewTag("");
+  };
+
+  const handleRemoveTag = (tag) => {
+    setLocalTags(localTags.filter(t => t !== tag));
+  };
+
+  const handleSaveTags = async () => {
+    try {
+      const reqBody = {
+        userId,
+        categories: preferences.categories,
+        ratings: preferences.ratings,
+        customFoods: preferences.customFoods,
+        tags: localTags,
+      };
+      console.log("[client] POST /api/user/preferences req:", reqBody);
+      const res = await axios.post("http://localhost:4000/api/user/preferences", reqBody);
+      console.log("[client] POST /api/user/preferences resp:", res.data);
+      // 응답에 tags가 누락되는 상황에서도 UI는 즉시 반영
+      setPreferences(prev => ({ ...prev, tags: [...localTags] }));
+      await fetchPreferences();
+    } catch (err) {
+      console.error("태그 저장 실패:", err);
     }
   };
 
@@ -89,61 +231,140 @@ const handleSave = async (foodId) => {
     }
   };
 
+  // 취향 데이터가 없으면 로딩 표시
+  if (!hasPreferences) {
+    return <div>취향 데이터를 불러오는 중...</div>;
+  }
+
+  const filteredEntries = Object.entries(preferences.ratings || {}).filter(([_, obj]) => {
+    if (categoryFilter === '전체') return true;
+    // obj.name로부터 카테고리를 알 수 없다면 그대로 모두 노출 (실제 연동 시 Food 모델 참조 필요)
+    // 추후 개선: 서버에서 ratings에 category 포함하도록 확장
+    return true;
+  });
+
+  const categories = ['전체', '한식', '중식', '일식', '양식', '기타'];
+
   return (
-    <div>
-      <h2>Preferences Page</h2>
+    <Container>
+      <h2>Preferences</h2>
+      <Section>
+        <h3>태그 라이브러리</h3>
+        <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
+          <Input
+            type="text"
+            placeholder="태그 검색"
+            value={tagSearch}
+            onChange={(e) => setTagSearch(e.target.value)}
+          />
+          <span style={{ color:'#64748b' }}>
+            {allTags.length} tags
+          </span>
+        </div>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          {allTags
+            .filter(t => !tagSearch || t.includes(tagSearch.trim().toLowerCase()))
+            .map((tag, idx) => (
+            <button
+              key={idx}
+              onClick={() => setLocalTags(prev => prev.includes(tag) ? prev.filter(x=>x!==tag) : [...prev, tag])}
+              style={{
+                padding:'6px 10px', borderRadius:999,
+                border:`1px solid ${localTags.includes(tag)?'#059669':'#cbd5e1'}`,
+                background: localTags.includes(tag)?'#059669':'#fff',
+                color: localTags.includes(tag)?'#fff':'#0f172a'
+              }}
+            >#{tag}</button>
+          ))}
+        </div>
+        <div style={{ marginTop:8 }}>
+          <Button onClick={handleSaveTags}>태그 변경 저장</Button>
+        </div>
+      </Section>
+      <Section>
+        <h3>내 태그</h3>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
+          {localTags.map((tag, idx) => (
+            <span key={idx} style={{
+              padding:'4px 10px', borderRadius:999, background:'#f1f5f9', color:'#0f172a',
+              border:'1px solid #cbd5e1', display:'inline-flex', alignItems:'center', gap:6
+            }}>
+              #{tag}
+              <button onClick={() => handleRemoveTag(tag)} style={{
+                border:'none', background:'transparent', color:'#64748b', cursor:'pointer'
+              }}>×</button>
+            </span>
+          ))}
+        </div>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <Input
+            type="text"
+            placeholder="태그 입력 (예: 매운맛)"
+            value={newTag}
+            onChange={(e) => setNewTag(e.target.value)}
+          />
+          <Button onClick={handleAddTag}>추가</Button>
+          <Button onClick={handleSaveTags}>저장</Button>
+        </div>
+      </Section>
+      <FilterBar>
+        {categories.map(cat => (
+          <FilterButton
+            key={cat}
+            $active={categoryFilter === cat}
+            onClick={() => setCategoryFilter(cat)}
+          >
+            {cat}
+          </FilterButton>
+        ))}
+      </FilterBar>
 
       {/* 기존 취향 */}
-      <div>
+      <Section>
         <h3>기존 취향</h3>
-        {preferences.ratings && Object.entries(preferences.ratings).map(([foodId, obj]) => (
-          <div key={foodId}>
-            <span>음식명: {obj.name}</span>
-            <select
-              value={obj.rating}
-              onChange={(e) => handleRatingChange(foodId, parseInt(e.target.value))}
-            >
-              {[1, 2, 3, 4, 5].map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-            <button onClick={() => handleSave(foodId)}>저장</button>
-            <button onClick={() => handleDelete(foodId)}>삭제</button>
-          </div>
+        {filteredEntries.map(([foodId, obj]) => (
+          <Row key={foodId}>
+            <div>
+              <div style={{ fontWeight: 600 }}>{obj.name}</div>
+            </div>
+            <Controls>
+              <StarRating
+                value={obj.rating}
+                onChange={(v) => handleRatingChange(foodId, v)}
+                size={20}
+              />
+              <Button onClick={() => handleSave(foodId)}>저장</Button>
+              <Button onClick={() => handleDelete(foodId)} style={{ background:'#ef4444', borderColor:'#ef4444' }}>삭제</Button>
+            </Controls>
+          </Row>
         ))}
-      </div>
+      </Section>
 
       {/* 카테고리 취향 */}
-      <div style={{ marginTop: "1rem" }}>
+      <Section>
         <h3>카테고리 취향</h3>
         {Array.isArray(preferences.categories) &&
           preferences.categories.map((cat, index) => (
-            <div key={index} style={{ marginBottom: "0.5rem" }}>
+            <Row key={index}>
               <span>카테고리: {cat}</span>
-            </div>
+            </Row>
           ))}
-      </div>
+      </Section>
 
       {/* 새 음식 추가 */}
-      <div style={{ marginTop: "1rem" }}>
+      <Section>
         <h3>새 음식 추가</h3>
-        <input
-          type="text"
-          placeholder="음식 이름"
-          value={newFood}
-          onChange={(e) => setNewFood(e.target.value)}
-        />
-        <select value={newRating} onChange={(e) => setNewRating(parseInt(e.target.value))}>
-          {[1, 2, 3, 4, 5].map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-        <button onClick={handleAddNewPreference}>추가</button>
-      </div>
-    </div>
+        <div style={{ display:'flex', gap:'0.5rem', alignItems:'center', flexWrap:'wrap' }}>
+          <Input
+            type="text"
+            placeholder="음식 이름"
+            value={newFood}
+            onChange={(e) => setNewFood(e.target.value)}
+          />
+          <StarRating value={newRating} onChange={(v) => setNewRating(v)} />
+          <Button onClick={handleAddNewPreference}>추가</Button>
+        </div>
+      </Section>
+    </Container>
   );
 }

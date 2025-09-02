@@ -1,8 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
-import axios from "axios"; 
+import axios from "axios";
+import { getAllFoods } from "../services/foodApi"; 
+import StarRating from "./StarRating";
 
-const Container = styled.div``;
+const Container = styled.div`
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+`;
 
 const StepTitle = styled.h2`
   margin-bottom: 1rem;
@@ -19,6 +26,10 @@ const FoodItem = styled.div`
   display: flex;
   align-items: center;
   gap: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
 `;
 
 const FoodImage = styled.img`
@@ -44,6 +55,11 @@ const TextInput = styled.input`
 const Button = styled.button`
   padding: 0.5rem 1rem;
   cursor: pointer;
+  border: 1px solid #2563eb;
+  color: #fff;
+  background: #2563eb;
+  border-radius: 8px;
+  margin-top: 0.5rem;
 `;
 
 export default function OnboardingPreferences({ onComplete }) {
@@ -55,66 +71,156 @@ export default function OnboardingPreferences({ onComplete }) {
   const [ratings, setRatings] = useState({});
   // customFoods: 사용자가 직접 입력한 좋아하는 음식 문자열 (쉼표 구분)
   const [customFoods, setCustomFoods] = useState("");
+  // availableFoods: 백엔드에서 가져온 실제 음식 데이터
+  const [availableFoods, setAvailableFoods] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+  // 추천 카테고리/태그
+  const [suggestedCategories, setSuggestedCategories] = useState([]);
+  const [suggestedTags, setSuggestedTags] = useState([]);
+  const [selectedTags, setSelectedTags] = useState([]);
 
   // Step1: 선택 가능한 음식 카테고리 목록
   const foodCategories = ["한식", "중식", "일식", "양식", "디저트", "기타"];
 
-  // Step2: 대표 음식 샘플 데이터 (실제로는 DB나 JSON에서 불러옴)
-  const sampleFoods = [
-    { id: 1, name: "김치찌개", img: "/images/kimchi.png" },
-    { id: 2, name: "짜장면", img: "/images/jjajang.png" },
-    { id: 3, name: "초밥", img: "/images/sushi.png" },
-    { id: 4, name: "피자", img: "/images/pizza.png" },
-    { id: 5, name: "케이크", img: "/images/cake.png" },
-  ];
+  // 컴포넌트 마운트 시 음식 데이터 가져오기
+  useEffect(() => {
+    const fetchFoods = async () => {
+      try {
+        const response = await getAllFoods({ available: true });
+        setAvailableFoods(response.data);
+        setLoading(false);
+      } catch (error) {
+        console.error("음식 데이터 가져오기 실패:", error);
+        setLoading(false);
+      }
+    };
+    
+    fetchFoods();
+  }, []);
 
-  // 음식별 선호도 평가를 저장하는 함수
-// foodId: 평가할 음식의 ID, rating: 1~5 점수, foodName: 음식 이름
-const handleRating = (foodId, rating) => {
-  const food = sampleFoods.find(f => f.id === foodId);
-  setRatings({
-    ...ratings,
-    [foodId]: { name: food.name, rating }
-  });
-};
+  // 사용자가 입력한 평점(ratings)을 기반으로 자동 추천 카테고리/태그 계산
+  useEffect(() => {
+    if (!availableFoods.length) return;
+    const ratedIds = Object.keys(ratings);
+    if (!ratedIds.length) {
+      setSuggestedCategories([]);
+      setSuggestedTags([]);
+      return;
+    }
+
+    const categoryCount = {};
+    const tagCount = {};
+
+    ratedIds.forEach(id => {
+      const food = availableFoods.find(f => f._id === id);
+      if (!food) return;
+      // 카테고리 가중치: 사용자가 준 점수로 가중
+      const weight = Number(ratings[id]?.rating) || 0;
+      if (food.category) {
+        categoryCount[food.category] = (categoryCount[food.category] || 0) + weight;
+      }
+      if (Array.isArray(food.tags)) {
+        food.tags.forEach(t => {
+          tagCount[t] = (tagCount[t] || 0) + weight;
+        });
+      }
+    });
+
+    const topCategories = Object.entries(categoryCount)
+      .sort((a,b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([name]) => name);
+
+    const topTags = Object.entries(tagCount)
+      .sort((a,b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name]) => name);
+
+    setSuggestedCategories(topCategories);
+    setSuggestedTags(topTags);
+  }, [ratings, availableFoods]);
+
+  // 음식별 선호도 평가를 저장 (0.5 단위)
+  const handleRating = (foodId, rating) => {
+    const food = availableFoods.find(f => f._id === foodId);
+    if (food) {
+      setRatings({
+        ...ratings,
+        [foodId]: { name: food.name, rating }
+      });
+    }
+  };
 
   // 완료 버튼 클릭 시 호출되는 함수
-  // 현재 선택된 카테고리, 평가, 직접 입력한 음식을 정리하여 onComplete 콜백 호출
-const handleFinish = async () => {
-  // customFoods를 쉼표로 분리
-  const customFoodsArr = customFoods
-    .split(",")
-    .map(f => f.trim())
-    .filter(f => f);
+  const handleFinish = async () => {
+    // customFoods를 쉼표로 분리
+    const customFoodsArr = customFoods
+      .split(",")
+      .map(f => f.trim())
+      .filter(f => f);
 
-  // ratings에 customFoods도 추가 (중복 방지)
-  const updatedRatings = { ...ratings };
-  customFoodsArr.forEach(foodName => {
-    // ratings에 이미 같은 name이 있는지 확인
-    const exists = Object.values(updatedRatings).some(r => r.name === foodName);
-    if (!exists) {
-      // 고유 key 생성 (음식명 + "custom" 등)
-      const key = `${foodName}_custom`;
-      updatedRatings[key] = { name: foodName, rating: 5 };
+    // ratings에 customFoods도 추가 (중복 방지)
+    const updatedRatings = { ...ratings };
+    customFoodsArr.forEach(foodName => {
+      // ratings에 이미 같은 name이 있는지 확인
+      const exists = Object.values(updatedRatings).some(r => r.name === foodName);
+      if (!exists) {
+        // 고유 key 생성 (음식명 + "custom" 등)
+        const key = `${foodName}_custom`;
+        updatedRatings[key] = { name: foodName, rating: 5 };
+      }
+    });
+
+    const finalCategories = Array.from(new Set([...(categories || []), ...suggestedCategories]));
+    const finalTags = Array.from(new Set([...(selectedTags || []), ...suggestedTags]));
+
+    const data = {
+      userId: "user123", // 실제 로그인/회원가입 시 할당된 ID 사용
+      categories: finalCategories,
+      ratings: updatedRatings,
+      customFoods: customFoodsArr,
+      tags: finalTags,
+    };
+    
+    console.log("최종 취향 데이터:", data);
+    
+    try {
+      const res = await axios.post("http://localhost:4000/api/user/preferences", data);
+      console.log("서버 저장 결과:", res.data);
+      
+      // 취향 데이터를 Food 데이터에 반영하는 API 호출
+      await updateFoodRatings(updatedRatings);
+      
+      // 온보딩 완료 후 홈으로 이동
+      navigate('/');
+    } catch (err) {
+      console.error("온보딩 취향 저장 실패:", err);
     }
-  });
-
-  const data = {
-    userId: "user123", // 실제 로그인/회원가입 시 할당된 ID 사용
-    categories,
-    ratings: updatedRatings,
-    customFoods: customFoodsArr,
   };
-  console.log("최종 취향 데이터:", data);
-  try {
-    const res = await axios.post("http://localhost:4000/api/user/preferences", data);
-    console.log("서버 저장 결과:", res.data);
-    if (onComplete) onComplete(data);
-  } catch (err) {
-    console.error("온보딩 취향 저장 실패:", err);
-  }
-  if (onComplete) onComplete(data);
-};
+
+  // 사용자 취향을 Food 데이터에 반영하는 함수
+  const updateFoodRatings = async (userRatings) => {
+    try {
+      // 각 음식에 대해 사용자 평점을 업데이트
+      for (const [foodId, ratingData] of Object.entries(userRatings)) {
+        if (foodId.includes('_custom')) continue; // 커스텀 음식은 제외
+        
+        const food = availableFoods.find(f => f._id === foodId);
+        if (food) {
+          // 기존 평점과 새 평점을 평균내어 업데이트
+          const newRating = (food.rating + ratingData.rating) / 2;
+          
+          await axios.put(`http://localhost:4000/api/food/${foodId}`, {
+            rating: Math.round(newRating * 10) / 10 // 소수점 첫째자리까지
+          });
+        }
+      }
+      console.log("음식 평점 업데이트 완료");
+    } catch (error) {
+      console.error("음식 평점 업데이트 실패:", error);
+    }
+  };
 
   return (
     <Container>
@@ -144,29 +250,66 @@ const handleFinish = async () => {
 
       {step === 2 && (
         <div>
-          <StepTitle>2단계: 음식 사진을 보고 선호도를 선택하세요</StepTitle>
-          {sampleFoods.map(food => (
-            <FoodItem key={food.id}>
-              <FoodImage src={food.img} alt={food.name} />
-              <FoodName>{food.name}</FoodName>
-              <FoodSelect
-                value={ratings[food.id] || ""}
-                onChange={e => handleRating(food.id, Number(e.target.value))}
-              >
-                <option value="">선택</option>
-                {[1, 2, 3, 4, 5].map(r => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-              </FoodSelect>
-            </FoodItem>
-          ))}
-          <Button onClick={() => setStep(3)}>다음</Button>
+          <StepTitle>2단계: 음식을 보고 선호도를 선택하세요</StepTitle>
+          {loading ? (
+            <div>음식 데이터를 불러오는 중...</div>
+          ) : (
+            <>
+              {availableFoods.slice(0, 12).map(food => (
+                <FoodItem key={food._id}>
+                  <div style={{ width: '80px', height: '60px', backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px' }}>
+                    {food.image ? (
+                      <FoodImage src={food.image} alt={food.name} />
+                    ) : (
+                      <span style={{ fontSize: '12px', color: '#666' }}>이미지 없음</span>
+                    )}
+                  </div>
+                  <FoodName>{food.name} ({food.category})</FoodName>
+                  <StarRating
+                    value={ratings[food._id]?.rating || 0}
+                    onChange={(v) => handleRating(food._id, v)}
+                    size={22}
+                  />
+                </FoodItem>
+              ))}
+              <Button onClick={() => setStep(3)}>다음</Button>
+            </>
+          )}
         </div>
       )}
 
       {step === 3 && (
         <div>
           <StepTitle>3단계: 좋아하는 음식을 직접 입력하세요 (쉼표 구분)</StepTitle>
+          <StepTitle>추천 카테고리/태그를 확인하고 필요하면 선택/해제하세요</StepTitle>
+          <div style={{ marginBottom:'0.75rem' }}>
+            <div style={{ fontWeight:600, marginBottom:'0.25rem' }}>추천 카테고리</div>
+            {(suggestedCategories.length ? suggestedCategories : ["한식","중식","일식","양식"]).map(cat => (
+              <button
+                key={cat}
+                onClick={() => setCategories(prev => prev.includes(cat) ? prev.filter(c=>c!==cat) : [...prev, cat])}
+                style={{
+                  marginRight:8, marginBottom:8, padding:'6px 10px', borderRadius:999,
+                  border: `1px solid ${categories.includes(cat)?'#2563eb':'#cbd5e1'}`,
+                  background: categories.includes(cat)?'#2563eb':'#fff', color: categories.includes(cat)?'#fff':'#0f172a'
+                }}
+              >{cat}</button>
+            ))}
+          </div>
+          <div style={{ marginBottom:'0.75rem' }}>
+            <div style={{ fontWeight:600, marginBottom:'0.25rem' }}>추천 태그</div>
+            {(suggestedTags.length ? suggestedTags : ["매운맛","면요리","고기","해산물"]).map(tag => (
+              <button
+                key={tag}
+                onClick={() => setSelectedTags(prev => prev.includes(tag) ? prev.filter(t=>t!==tag) : [...prev, tag])}
+                style={{
+                  marginRight:8, marginBottom:8, padding:'6px 10px', borderRadius:999,
+                  border: `1px solid ${selectedTags.includes(tag)?'#059669':'#cbd5e1'}`,
+                  background: selectedTags.includes(tag)?'#059669':'#fff', color: selectedTags.includes(tag)?'#fff':'#0f172a'
+                }}
+              >#{tag}</button>
+            ))}
+          </div>
           <StepTitle>이곳에 입력하는 음식은 선호도 5로 저장되며, 선호도는 추후 선호도 창에서 언제든 수정할 수 있습니다.</StepTitle>
           <TextInput
             type="text"

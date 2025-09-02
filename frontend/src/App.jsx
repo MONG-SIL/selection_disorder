@@ -4,6 +4,7 @@ import WeatherWidget from "./components/WeatherWidget";
 import ChatBox from "./components/ChatBox";
 import MapView from "./components/MapView";
 import Preferences from "./components/Preferences";
+import FoodList from "./components/FoodList";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Navigation from "./components/Navigation";
 import OnboardingPreferences from "./components/OnboardingPreferences";
@@ -56,6 +57,7 @@ export default function App() {
           />
           <Route path="/preferences" element={<Preferences />} />
           <Route path="/chat" element={<ChatBox />} />
+          <Route path="/food" element={<FoodList />} />
           <Route path="/signup" element={<Signup/>} />
           <Route path="/onboarding" element={<OnboardingPreferences/>} />
         </Routes>

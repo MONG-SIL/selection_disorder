@@ -5,6 +5,7 @@ import preferencesRoutes from "./routes/preferences.js";
 import userRoutes from "./routes/user.js";
 import chatRoutes from "./routes/chat.js";
 import foodRoutes from "./routes/food.js";
+import gptRoutes from "./routes/gpt.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 
@@ -26,6 +27,7 @@ app.use("/api/user/preferences", preferencesRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/food", foodRoutes);
+app.use("/api/gpt", gptRoutes);
 
 
 

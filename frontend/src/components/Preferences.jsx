@@ -4,6 +4,7 @@ import styled from "styled-components";
 import axios from "axios";
 import StarRating from "./StarRating";
 import { getAllFoods } from "../services/foodApi";
+import { generateFoodTags } from "../services/gptApi";
 
 const Container = styled.div`
   max-width: 900px;
@@ -79,6 +80,9 @@ export default function Preferences() {
   const [newTag, setNewTag] = useState("");
   const [allTags, setAllTags] = useState([]);
   const [tagSearch, setTagSearch] = useState("");
+  const [nameToCategory, setNameToCategory] = useState({});
+  const [tab, setTab] = useState('tags'); // 'tags' | 'categories' | 'ratings'
+
   const navigate = useNavigate();
 
   const userId = "user123"; // userId 고정
@@ -104,12 +108,13 @@ export default function Preferences() {
     }
   };
 
-  // 모든 음식의 태그를 수집해 태그 라이브러리 구성
+  // 모든 음식의 태그를 수집해 태그 라이브러리 구성 + 이름→카테고리 매핑
   useEffect(() => {
     const loadTags = async () => {
       try {
         const res = await getAllFoods({ available: true });
         const tagCount = {};
+        const map = {};
         (res.data || []).forEach(food => {
           if (Array.isArray(food.tags)) {
             food.tags.forEach(t => {
@@ -117,11 +122,15 @@ export default function Preferences() {
               tagCount[key] = (tagCount[key] || 0) + 1;
             });
           }
+          if (food?.name && food?.category) {
+            map[food.name] = food.category;
+          }
         });
         const sorted = Object.entries(tagCount)
           .sort((a,b) => b[1] - a[1])
           .map(([t]) => t);
         setAllTags(sorted);
+        setNameToCategory(map);
       } catch (e) {
         console.error("태그 라이브러리 로드 실패:", e);
       }
@@ -207,22 +216,38 @@ const handleSave = async (foodId) => {
     }
   };
 
-  // 새로운 음식 취향 추가 (POST)
+  // 새로운 음식 취향 추가 (POST) - GPT 태그 자동 생성 포함
   const handleAddNewPreference = async () => {
     const foodName = newFood.trim();
     if (!foodName) return;
 
     try {
+      // GPT로 태그 생성
+      console.log(`[client] GPT 태그 생성 요청: ${foodName}`);
+      const gptResponse = await generateFoodTags(foodName);
+      console.log(`[client] GPT 응답:`, gptResponse);
+      
+      const { category, tags } = gptResponse.data;
+      
+      // 생성된 태그를 localTags에 추가
+      const newTags = [...new Set([...localTags, ...tags])];
+      setLocalTags(newTags);
+      
+      // 카테고리도 추가 (중복 제거)
+      const updatedCategories = [...new Set([...preferences.categories, category])];
+      
       const newRatingObj = { name: foodName, rating: newRating };
       const updatedRatings = { ...preferences.ratings, [foodName + "_custom"]: newRatingObj };
       const updatedCustomFoods = [...preferences.customFoods, foodName];
 
       await axios.post("http://localhost:4000/api/user/preferences", {
         userId,
-        categories: preferences.categories,
+        categories: updatedCategories,
         ratings: updatedRatings,
         customFoods: updatedCustomFoods,
+        tags: newTags,
       });
+      
       setNewFood("");
       setNewRating(3);
       fetchPreferences();
@@ -238,16 +263,51 @@ const handleSave = async (foodId) => {
 
   const filteredEntries = Object.entries(preferences.ratings || {}).filter(([_, obj]) => {
     if (categoryFilter === '전체') return true;
-    // obj.name로부터 카테고리를 알 수 없다면 그대로 모두 노출 (실제 연동 시 Food 모델 참조 필요)
-    // 추후 개선: 서버에서 ratings에 category 포함하도록 확장
-    return true;
+    const cat = nameToCategory[obj?.name];
+    return cat ? cat === categoryFilter : false;
   });
 
   const categories = ['전체', '한식', '중식', '일식', '양식', '기타'];
 
+  
+  const togglePreferredCategory = (cat) => {
+    if (cat === '전체') return;
+    const exists = (preferences.categories || []).includes(cat);
+    const next = exists
+      ? (preferences.categories || []).filter(c => c !== cat)
+      : [ ...(preferences.categories || []), cat ];
+    setPreferences({ ...preferences, categories: next });
+  };
+
+  const savePreferredCategories = async () => {
+    try {
+      const reqBody = {
+        userId,
+        categories: preferences.categories,
+        ratings: preferences.ratings,
+        customFoods: preferences.customFoods,
+        tags: localTags,
+      };
+      console.log('[client] POST /api/user/preferences (categories) req:', reqBody);
+      const res = await axios.post('http://localhost:4000/api/user/preferences', reqBody);
+      console.log('[client] POST /api/user/preferences (categories) resp:', res.data);
+      await fetchPreferences();
+    } catch (e) {
+      console.error('카테고리 선호 저장 실패:', e);
+    }
+  };
+
   return (
     <Container>
       <h2>Preferences</h2>
+      {/* 미니 네비게이션 */}
+      <FilterBar>
+        <FilterButton $active={tab==='tags'} onClick={() => setTab('tags')}>태그</FilterButton>
+        <FilterButton $active={tab==='categories'} onClick={() => setTab('categories')}>카테고리</FilterButton>
+        <FilterButton $active={tab==='ratings'} onClick={() => setTab('ratings')}>평가</FilterButton>
+      </FilterBar>
+
+      {tab === 'tags' && (
       <Section>
         <h3>태그 라이브러리</h3>
         <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
@@ -281,6 +341,8 @@ const handleSave = async (foodId) => {
           <Button onClick={handleSaveTags}>태그 변경 저장</Button>
         </div>
       </Section>
+      )}
+      {tab === 'tags' && (
       <Section>
         <h3>내 태그</h3>
         <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
@@ -307,6 +369,9 @@ const handleSave = async (foodId) => {
           <Button onClick={handleSaveTags}>저장</Button>
         </div>
       </Section>
+      )}
+      {tab === 'categories' && (
+      <>
       <FilterBar>
         {categories.map(cat => (
           <FilterButton
@@ -319,7 +384,38 @@ const handleSave = async (foodId) => {
         ))}
       </FilterBar>
 
-      {/* 기존 취향 */}
+      <Section>
+        <h3>카테고리 선호 설정</h3>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
+          {categories.filter(c => c !== '전체').map(cat => (
+            <button
+              key={cat}
+              onClick={() => togglePreferredCategory(cat)}
+              style={{
+                padding:'6px 10px', borderRadius:999,
+                border:`1px solid ${(preferences.categories||[]).includes(cat)?'#2563eb':'#cbd5e1'}`,
+                background: (preferences.categories||[]).includes(cat)?'#2563eb':'#fff',
+                color: (preferences.categories||[]).includes(cat)?'#fff':'#0f172a'
+              }}
+            >{cat}</button>
+          ))}
+        </div>
+        <Button onClick={savePreferredCategories}>카테고리 선호 저장</Button>
+      </Section>
+      <Section>
+        <h3>카테고리 취향</h3>
+        {Array.isArray(preferences.categories) &&
+          preferences.categories.map((cat, index) => (
+            <Row key={index}>
+              <span>카테고리: {cat}</span>
+            </Row>
+          ))}
+      </Section>
+      </>
+      )}
+ 
+      {tab === 'ratings' && (
+      <>
       <Section>
         <h3>기존 취향</h3>
         {filteredEntries.map(([foodId, obj]) => (
@@ -340,18 +436,6 @@ const handleSave = async (foodId) => {
         ))}
       </Section>
 
-      {/* 카테고리 취향 */}
-      <Section>
-        <h3>카테고리 취향</h3>
-        {Array.isArray(preferences.categories) &&
-          preferences.categories.map((cat, index) => (
-            <Row key={index}>
-              <span>카테고리: {cat}</span>
-            </Row>
-          ))}
-      </Section>
-
-      {/* 새 음식 추가 */}
       <Section>
         <h3>새 음식 추가</h3>
         <div style={{ display:'flex', gap:'0.5rem', alignItems:'center', flexWrap:'wrap' }}>
@@ -365,6 +449,8 @@ const handleSave = async (foodId) => {
           <Button onClick={handleAddNewPreference}>추가</Button>
         </div>
       </Section>
+      </>
+      )}
     </Container>
   );
 }

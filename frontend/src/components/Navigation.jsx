@@ -31,7 +31,7 @@ export default function Navigation() {
       <NavLink to="/weather">Weather</NavLink>
       <NavLink to="/map">Map</NavLink>
       <NavLink to="/food">Food Menu</NavLink>
-      <NavLink to="/preferences">Preferences</NavLink>
+      <NavLink to="/preferences">My</NavLink>
       <NavLink to="/chat">Chat</NavLink>
     </NavBar>
   );

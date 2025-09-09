@@ -196,6 +196,25 @@ const FoodList = () => {
     }, 2000); // 300ms 디바운스
   }, [selectedCategory, searchTerm]);
 
+  // Unsplash 이미지 검색
+  const fetchFoodImage = async (foodName) => {
+    try {
+      const res = await axios.get("https://api.unsplash.com/search/photos", {
+        params: { query: foodName, per_page: 1 },
+        headers: {
+          Authorization: `Client-ID ${import.meta.env.VITE_UNSPLASH_KEY}`,
+        },
+      });
+      if (res.data.results.length > 0) {
+        return res.data.results[0].urls.small;
+      }
+    } catch (err) {
+      console.error(`${foodName} 이미지 검색 실패:`, err);
+    }
+    return null;
+  };
+
+
   useEffect(() => {
     debouncedFetchFoods();
     
@@ -240,7 +259,15 @@ const FoodList = () => {
         response = await getFoodsByCategory(selectedCategory);
       }
       
-      setFoods(response.data);
+      setFoods(await Promise.all(
+        response.data.map(async (food) => {
+          if (!food.image) {
+            const fetchedImage = await fetchFoodImage(food.name);
+            return { ...food, image: fetchedImage };
+          }
+          return food;
+        })
+      ));
     } catch (err) {
       setError('음식 리스트를 가져오는데 실패했습니다.');
       console.error('Error fetching foods:', err);

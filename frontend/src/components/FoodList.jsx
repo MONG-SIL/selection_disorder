@@ -200,13 +200,15 @@ const FoodList = () => {
   const fetchFoodImage = async (foodName) => {
     try {
       const res = await axios.get("https://api.unsplash.com/search/photos", {
-        params: { query: foodName, per_page: 1 },
+        params: { query: foodName, per_page: 10 },
         headers: {
           Authorization: `Client-ID ${import.meta.env.VITE_UNSPLASH_KEY}`,
         },
       });
-      if (res.data.results.length > 0) {
-        return res.data.results[0].urls.small;
+      const results = res.data.results || [];
+      if (results.length > 0) {
+        const idx = Math.floor(Math.random() * results.length);
+        return results[idx].urls.small;
       }
     } catch (err) {
       console.error(`${foodName} 이미지 검색 실패:`, err);

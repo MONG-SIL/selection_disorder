@@ -26,13 +26,37 @@ router.get("/popular-foods", async (req, res) => {
       chart: "mostPopular",
       regionCode: "KR",
       videoCategoryId: "26",
-      maxResults: 10,
+      maxResults: 50,
     });
 
-    const foods = response.data.items.map((video) => ({
-      title: video.snippet.title,
-      thumbnail: video.snippet.thumbnails?.medium?.url || "",
-    }));
+    // 음식 관련 키워드
+        const foodKeywords = [
+            "음식", "요리", "레시피",
+            "food", "cooking", "recipe"
+          ];
+          // 필터 함수: 제목 또는 태그에 음식 키워드 포함 여부
+          function isFoodRelated(video) {
+            const title = video.snippet.title || "";
+            const tags = video.snippet.tags || [];
+            // 소문자 비교를 위해 모두 소문자로 변환
+            const titleLower = title.toLowerCase();
+            const tagsLower = tags.map(tag => (tag || "").toLowerCase());
+            return foodKeywords.some(keyword => {
+              const keywordLower = keyword.toLowerCase();
+              return titleLower.includes(keywordLower) ||
+                tagsLower.some(tag => tag.includes(keywordLower));
+            });
+          }
+          let foods = response.data.items
+            .filter(isFoodRelated)
+            .map((video) => ({
+        title: video.snippet.title,
+        thumbnail: video.snippet.thumbnails?.medium?.url || "",
+        tags: video.snippet.tags || [],
+      }));
+      if (foods.length > 10) {
+        foods = foods.slice(0, 10);
+      }
 
     res.json(foods);
   } catch (err) {

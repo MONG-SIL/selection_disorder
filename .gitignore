@@ -1,3 +1,21 @@
+# Node.js 환경
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# 환경 변수
+.env
 backend/.env
-.env
-.env
+frontend/.env
+
+# Google API 민감 파일
+frontend/client_secret.json
+frontend/quickstart.js
+
+# 프론트엔드 빌드 산출물
+frontend/dist/
+frontend/build/
+
+# MacOS, VSCode 등 OS/IDE 관련
+.DS_Store
+.vscode/

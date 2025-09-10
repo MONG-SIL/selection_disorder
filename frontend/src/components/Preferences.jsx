@@ -72,6 +72,7 @@ const FilterButton = styled.button`
 
 export default function Preferences() {
   const [preferences, setPreferences] = useState({ ratings: {}, categories: [], customFoods: [] });
+  const [allFoods, setAllFoods] = useState([]);
   const [newFood, setNewFood] = useState("");
   const [newRating, setNewRating] = useState(3);
   const [hasPreferences, setHasPreferences] = useState(false);
@@ -82,6 +83,10 @@ export default function Preferences() {
   const [tagSearch, setTagSearch] = useState("");
   const [nameToCategory, setNameToCategory] = useState({});
   const [tab, setTab] = useState('tags'); // 'tags' | 'categories' | 'ratings'
+  const [unratedRatings, setUnratedRatings] = useState({});
+  const [unratedSearch, setUnratedSearch] = useState("");
+  const [unratedSortKey, setUnratedSortKey] = useState("popular"); // popular | name | category
+  const [unratedVisible, setUnratedVisible] = useState(12);
 
   const navigate = useNavigate();
 
@@ -97,6 +102,9 @@ export default function Preferences() {
       setPreferences(res.data);
       setLocalTags(Array.isArray(res.data.tags) ? res.data.tags : []);
       setHasPreferences(true);
+      // 네비게이션 동기화를 위한 플래그/이벤트
+      window.localStorage.setItem('hasPreferences', 'true');
+      window.dispatchEvent(new Event('preferences-updated'));
     } catch (err) {
       if (err.response?.status === 404) {
         console.log("사용자 취향 데이터가 없습니다. 온보딩으로 이동합니다.");
@@ -115,7 +123,9 @@ export default function Preferences() {
         const res = await getAllFoods({ available: true });
         const tagCount = {};
         const map = {};
-        (res.data || []).forEach(food => {
+        const foods = res.data || [];
+        setAllFoods(foods);
+        foods.forEach(food => {
           if (Array.isArray(food.tags)) {
             food.tags.forEach(t => {
               const key = String(t).toLowerCase();
@@ -211,6 +221,8 @@ const handleSave = async (foodId) => {
       // 응답에 tags가 누락되는 상황에서도 UI는 즉시 반영
       setPreferences(prev => ({ ...prev, tags: [...localTags] }));
       await fetchPreferences();
+      window.localStorage.setItem('hasPreferences', 'true');
+      window.dispatchEvent(new Event('preferences-updated'));
     } catch (err) {
       console.error("태그 저장 실패:", err);
     }
@@ -250,7 +262,9 @@ const handleSave = async (foodId) => {
       
       setNewFood("");
       setNewRating(3);
-      fetchPreferences();
+      await fetchPreferences();
+      window.localStorage.setItem('hasPreferences', 'true');
+      window.dispatchEvent(new Event('preferences-updated'));
     } catch (err) {
       console.error("새 취향 추가 실패:", err);
     }
@@ -294,6 +308,32 @@ const handleSave = async (foodId) => {
       await fetchPreferences();
     } catch (e) {
       console.error('카테고리 선호 저장 실패:', e);
+    }
+  };
+
+  // 온보딩에서 평점 입력하지 않은 음식 추가용 핸들러
+  const handleRateUnrated = (foodId, rating) => {
+    setUnratedRatings(prev => ({ ...prev, [foodId]: rating }));
+  };
+
+  const handleSaveUnrated = async (food) => {
+    try {
+      const rating = unratedRatings[food._id] ?? 3;
+      const requestData = {
+        userId,
+        foodId: food._id,
+        rating,
+      };
+      console.log("[client] PUT /api/user/preferences (unrated) req:", requestData);
+      await axios.put("http://localhost:4000/api/user/preferences", requestData);
+      setUnratedRatings(prev => {
+        const next = { ...prev };
+        delete next[food._id];
+        return next;
+      });
+      await fetchPreferences();
+    } catch (e) {
+      console.error("미평가 음식 저장 실패:", e);
     }
   };
 
@@ -416,6 +456,53 @@ const handleSave = async (foodId) => {
  
       {tab === 'ratings' && (
       <>
+      <Section>
+        <h3>온보딩에서 평가하지 않은 음식 추가</h3>
+        <div style={{ color:'#64748b', marginBottom:8 }}>목록에서 별점을 선택하고 추가를 눌러 저장하세요.</div>
+        {/* 컨트롤 바 */}
+        <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8, flexWrap:'wrap' }}>
+          <Input
+            type="text"
+            placeholder="음식 검색"
+            value={unratedSearch}
+            onChange={(e) => { setUnratedSearch(e.target.value); setUnratedVisible(12); }}
+          />
+          <Select value={unratedSortKey} onChange={(e) => { setUnratedSortKey(e.target.value); setUnratedVisible(12); }}>
+            <option value="popular">인기순</option>
+            <option value="name">이름순</option>
+            <option value="category">카테고리순</option>
+          </Select>
+        </div>
+        {(allFoods
+          .filter(f => !Object.keys(preferences.ratings || {}).includes(f._id))
+          .filter(f => !unratedSearch || (f.name||'').toLowerCase().includes(unratedSearch.trim().toLowerCase()))
+          .sort((a,b) => {
+            if (unratedSortKey === 'name') return (a.name||'').localeCompare(b.name||'');
+            if (unratedSortKey === 'category') return (a.category||'').localeCompare(b.category||'');
+            const ar = Number(a.rating||0);
+            const br = Number(b.rating||0);
+            return br - ar;
+          })
+          .slice(0, unratedVisible)).map(food => (
+          <Row key={food._id}>
+            <div>
+              <div style={{ fontWeight: 600 }}>{food.name}</div>
+              <div style={{ fontSize:12, color:'#64748b' }}>{food.category}</div>
+            </div>
+            <Controls>
+              <StarRating
+                value={unratedRatings[food._id] ?? 3}
+                onChange={(v) => handleRateUnrated(food._id, v)}
+                size={20}
+              />
+              <Button onClick={() => handleSaveUnrated(food)}>추가</Button>
+            </Controls>
+          </Row>
+        ))}
+        <div style={{ display:'flex', justifyContent:'center', marginTop:8 }}>
+          <Button onClick={() => setUnratedVisible(v => v + 12)}>더 보기</Button>
+        </div>
+      </Section>
       <Section>
         <h3>기존 취향</h3>
         {filteredEntries.map(([foodId, obj]) => (

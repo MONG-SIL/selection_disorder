@@ -35,6 +35,8 @@ const FoodItem = styled.div`
 const FoodImage = styled.img`
   width: 80px;
   height: auto;
+  border-radius: 6px;
+  object-fit: cover;
 `;
 
 const FoodName = styled.span`
@@ -79,24 +81,73 @@ export default function OnboardingPreferences({ onComplete }) {
   const [suggestedCategories, setSuggestedCategories] = useState([]);
   const [suggestedTags, setSuggestedTags] = useState([]);
   const [selectedTags, setSelectedTags] = useState([]);
+  const [existingRatingsMap, setExistingRatingsMap] = useState({});
+  const [hasPreferences, setHasPreferences] = useState(false);
+  // 검색/정렬/더보기
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState("popular"); // popular | name | category
+  const [visibleCount, setVisibleCount] = useState(12);
+  const [imageCache, setImageCache] = useState({});
 
   // Step1: 선택 가능한 음식 카테고리 목록
   const foodCategories = ["한식", "중식", "일식", "양식", "디저트", "기타"];
 
-  // 컴포넌트 마운트 시 음식 데이터 가져오기
+  // 컴포넌트 마운트 시 음식 데이터 + 기존 취향 확인
   useEffect(() => {
     const fetchFoods = async () => {
       try {
         const response = await getAllFoods({ available: true });
-        setAvailableFoods(response.data);
+        const foods = response.data || [];
+        setAvailableFoods(foods);
+        // Unsplash 이미지 미리 조회 (비동기 캐싱)
+        const entries = await Promise.all(foods.map(async (f) => {
+          if (f.image) return [f._id, f.image];
+          try {
+            const r = await axios.get('https://api.unsplash.com/search/photos', {
+              params: { query: `${f.name} ${f.category || ''}`.trim(), per_page: 10 },
+              headers: { Authorization: `Client-ID ${import.meta.env.VITE_UNSPLASH_KEY}` },
+            });
+            const results = r.data.results || [];
+            if (results.length > 0) {
+              const idx = Math.floor(Math.random() * results.length);
+              return [f._id, results[idx].urls.small];
+            }
+          } catch (e) {
+            // 무시하고 기본값 유지
+          }
+          return [f._id, null];
+        }));
+        const cache = entries.reduce((acc, [id, url]) => { if (id) acc[id] = url; return acc; }, {});
+        setImageCache(cache);
         setLoading(false);
       } catch (error) {
         console.error("음식 데이터 가져오기 실패:", error);
         setLoading(false);
       }
     };
-    
+    const checkExisting = async () => {
+      try {
+        const res = await axios.get("http://localhost:4000/api/user/preferences", { params: { userId: 'user123' } });
+        if (res?.data?.ratings) {
+          setExistingRatingsMap(res.data.ratings || {});
+          setHasPreferences(true);
+          // 두 번째 접속부터는 2단계로 진입
+          setStep(2);
+          // 네비게이션 동기화
+          window.localStorage.setItem('hasPreferences', 'true');
+          window.dispatchEvent(new Event('preferences-updated'));
+        }
+      } catch (e) {
+        if (e.response?.status === 404) {
+          setHasPreferences(false);
+        } else {
+          console.error('기존 취향 확인 실패:', e);
+        }
+      }
+    };
+
     fetchFoods();
+    checkExisting();
   }, []);
 
   // 사용자가 입력한 평점(ratings)을 기반으로 자동 추천 카테고리/태그 계산
@@ -149,6 +200,51 @@ export default function OnboardingPreferences({ onComplete }) {
         ...ratings,
         [foodId]: { name: food.name, rating }
       });
+    }
+  };
+
+  // 두 번째 접속(기존 취향 존재) 시: 2단계에서 별점 저장 후 홈으로 이동
+  const saveStep2AndFinish = async () => {
+    try {
+      const entries = Object.entries(ratings || {}).filter(([_, v]) => Number(v?.rating) > 0);
+      if (entries.length === 0) {
+        navigate('/');
+        return;
+      }
+      const userId = 'user123';
+      // 현재 저장된 전체 취향 불러오기 (없으면 기본값)
+      let current = { categories: [], ratings: {}, customFoods: [], tags: [] };
+      try {
+        const res = await axios.get('http://localhost:4000/api/user/preferences', { params: { userId } });
+        current = res.data || current;
+      } catch (e) {
+        // 404면 신규 생성 케이스로 간주
+        if (e.response?.status !== 404) {
+          console.error('기존 취향 조회 실패:', e);
+        }
+      }
+
+      // 새 평점을 병합(없던 음식은 추가, 있던 음식은 덮어쓰기)
+      const mergedRatings = { ...(current.ratings || {}) };
+      entries.forEach(([foodId, r]) => {
+        mergedRatings[foodId] = { name: r.name, rating: r.rating };
+      });
+
+      const body = {
+        userId,
+        categories: current.categories || [],
+        ratings: mergedRatings,
+        customFoods: current.customFoods || [],
+        tags: current.tags || [],
+      };
+      await axios.post('http://localhost:4000/api/user/preferences', body);
+      // 네비바와 다른 탭 동기화
+      window.localStorage.setItem('hasPreferences', 'true');
+      window.dispatchEvent(new Event('preferences-updated'));
+      navigate('/');
+    } catch (e) {
+      console.error('2단계 저장 실패:', e);
+      navigate('/');
     }
   };
 
@@ -255,11 +351,43 @@ export default function OnboardingPreferences({ onComplete }) {
             <div>음식 데이터를 불러오는 중...</div>
           ) : (
             <>
-              {availableFoods.slice(0, 12).map(food => (
+              {/* 컨트롤 바: 검색 + 정렬 */}
+              <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8, flexWrap:'wrap' }}>
+                <input
+                  type="text"
+                  placeholder="음식 검색"
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setVisibleCount(12); }}
+                  style={{ border:'1px solid #cbd5e1', borderRadius:8, padding:'6px 10px' }}
+                />
+                <select
+                  value={sortKey}
+                  onChange={(e) => { setSortKey(e.target.value); setVisibleCount(12); }}
+                  style={{ border:'1px solid #cbd5e1', borderRadius:8, padding:'6px 10px' }}
+                >
+                  <option value="popular">인기순</option>
+                  <option value="name">이름순</option>
+                  <option value="category">카테고리순</option>
+                </select>
+              </div>
+
+              {availableFoods
+                .filter(food => !Object.keys(existingRatingsMap).includes(food._id))
+                .filter(food => !search || food.name?.toLowerCase().includes(search.trim().toLowerCase()))
+                .sort((a,b) => {
+                  if (sortKey === 'name') return (a.name||'').localeCompare(b.name||'');
+                  if (sortKey === 'category') return (a.category||'').localeCompare(b.category||'');
+                  // popular: rating 내림차순, 없으면 0
+                  const ar = Number(a.rating||0);
+                  const br = Number(b.rating||0);
+                  return br - ar;
+                })
+                .slice(0, visibleCount)
+                .map(food => (
                 <FoodItem key={food._id}>
-                  <div style={{ width: '80px', height: '60px', backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px' }}>
-                    {food.image ? (
-                      <FoodImage src={food.image} alt={food.name} />
+                  <div style={{ width: '80px', height: '60px', backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', overflow:'hidden' }}>
+                    { (imageCache[food._id] || food.image) ? (
+                      <FoodImage src={imageCache[food._id] || food.image} alt={food.name} />
                     ) : (
                       <span style={{ fontSize: '12px', color: '#666' }}>이미지 없음</span>
                     )}
@@ -272,13 +400,16 @@ export default function OnboardingPreferences({ onComplete }) {
                   />
                 </FoodItem>
               ))}
-              <Button onClick={() => setStep(3)}>다음</Button>
+              <div style={{ display:'flex', justifyContent:'center' }}>
+                <Button onClick={() => setVisibleCount(c => c + 12)}>더 보기</Button>
+              </div>
+              <Button onClick={() => hasPreferences ? saveStep2AndFinish() : setStep(3)}>다음</Button>
             </>
           )}
         </div>
       )}
 
-      {step === 3 && (
+      {step === 3 && !hasPreferences && (
         <div>
           <StepTitle>3단계: 좋아하는 음식을 직접 입력하세요 (쉼표 구분)</StepTitle>
           <StepTitle>추천 카테고리/태그를 확인하고 필요하면 선택/해제하세요</StepTitle>

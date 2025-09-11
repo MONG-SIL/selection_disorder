@@ -88,7 +88,7 @@ const FoodImage = styled.div`
   color: #666;
   font-size: 14px;
   margin-bottom: 15px;
-  background-image: ${props => props.imageUrl ? `url(${props.imageUrl})` : 'none'};
+  background-image: ${props => props.$imageUrl ? `url(${props.$imageUrl})` : 'none'};
   background-size: cover;
   background-position: center;
 `;
@@ -179,6 +179,8 @@ const FoodList = () => {
   const [selectedCategory, setSelectedCategory] = useState('전체');
   const [userPreferences, setUserPreferences] = useState(null);
   const [showRecommended, setShowRecommended] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const searchInputRef = useRef(null);
   const debounceTimeoutRef = useRef(null);
 
@@ -197,23 +199,27 @@ const FoodList = () => {
   }, [selectedCategory, searchTerm]);
 
   // Unsplash 이미지 검색
-  const fetchFoodImage = async (foodName) => {
+  const fetchFoodImagesBatch = async (foodIds) => {
     try {
-      const res = await axios.get("https://api.unsplash.com/search/photos", {
-        params: { query: foodName, per_page: 10 },
-        headers: {
-          Authorization: `Client-ID ${import.meta.env.VITE_UNSPLASH_KEY}`,
-        },
-      });
-      const results = res.data.results || [];
-      if (results.length > 0) {
-        const idx = Math.floor(Math.random() * results.length);
-        return results[idx].urls.small;
-      }
-    } catch (err) {
-      console.error(`${foodName} 이미지 검색 실패:`, err);
+      const res = await axios.get('http://localhost:4000/api/food-images', { params: { ids: foodIds.join(',') } });
+      return res.data?.images || {};
+    } catch (e) {
+      console.error('이미지 배치 조회 실패:', e);
+      return {};
     }
-    return null;
+  };
+
+  // 평균 평점 일괄 조회
+  const fetchAverageRatings = async (foodIds) => {
+    try {
+      const res = await axios.get('http://localhost:4000/api/user/preferences/average-ratings', {
+        params: { ids: foodIds.join(',') }
+      });
+      return res.data?.averages || {};
+    } catch (e) {
+      console.error('평균 평점 조회 실패:', e);
+      return {};
+    }
   };
 
 
@@ -230,21 +236,24 @@ const FoodList = () => {
 
   // 사용자 취향 데이터 가져오기
   useEffect(() => {
+    if (!showRecommended) return; // 추천 모드일 때만 불러오기
     const fetchUserPreferences = async () => {
       try {
         const response = await axios.get("http://localhost:4000/api/user/preferences", {
-          params: { userId }
+          params: { userId },
+          validateStatus: (s) => (s >= 200 && s < 300) || s === 404,
         });
+        if (response.status === 404) {
+          setUserPreferences(null);
+          return;
+        }
         setUserPreferences(response.data);
       } catch (error) {
-        if (error.response?.status !== 404) {
-          console.error("사용자 취향 가져오기 실패:", error);
-        }
+        console.error("사용자 취향 가져오기 실패:", error);
       }
     };
-    
     fetchUserPreferences();
-  }, [userId]);
+  }, [userId, showRecommended]);
 
   const fetchFoods = async () => {
     try {
@@ -261,15 +270,17 @@ const FoodList = () => {
         response = await getFoodsByCategory(selectedCategory);
       }
       
-      setFoods(await Promise.all(
-        response.data.map(async (food) => {
-          if (!food.image) {
-            const fetchedImage = await fetchFoodImage(food.name);
-            return { ...food, image: fetchedImage };
-          }
-          return food;
-        })
-      ));
+      const foods = response.data;
+      const ids = foods.map(f => f._id).filter(Boolean);
+      const averages = ids.length ? await fetchAverageRatings(ids) : {};
+      const images = ids.length ? await fetchFoodImagesBatch(ids) : {};
+      const withImages = foods.map((food) => {
+        const avg = averages[food._id];
+        const rating = typeof avg === 'number' ? avg : 2.5;
+        const image = food.image || images[food._id] || null;
+        return { ...food, image, rating };
+      });
+      setFoods(withImages);
     } catch (err) {
       setError('음식 리스트를 가져오는데 실패했습니다.');
       console.error('Error fetching foods:', err);
@@ -280,10 +291,12 @@ const FoodList = () => {
 
   const handleCategoryChange = (category) => {
     setSelectedCategory(category);
+    setPage(1);
   };
 
   const handleSearchChange = (e) => {
     setSearchTerm(e.target.value);
+    setPage(1);
   };
 
   // 사용자 취향 기반 추천 음식 필터링 (카테고리 + 개별평가 + 태그 교집합)
@@ -329,6 +342,7 @@ const FoodList = () => {
 
   const handleShowRecommended = () => {
     setShowRecommended(!showRecommended);
+    setPage(1);
   };
 
   const renderStars = (rating) => {
@@ -396,48 +410,90 @@ const FoodList = () => {
           {searchTerm ? `"${searchTerm}"에 대한 검색 결과가 없습니다.` : '표시할 음식이 없습니다.'}
         </EmptyMessage>
       ) : (
-        <FoodGrid>
-          {(showRecommended ? getRecommendedFoods(foods) : foods).map(food => (
-            <FoodCard key={food._id}>
-              <FoodImage imageUrl={food.image}>
-                {!food.image && '이미지 없음'}
-              </FoodImage>
-              <FoodName>{food.name}</FoodName>
-              <FoodCategory>{food.category}</FoodCategory>
-              {food.description && (
-                <FoodDescription>{food.description}</FoodDescription>
-              )}
-              {food.price && (
-                <FoodPrice>₩{food.price.toLocaleString()}</FoodPrice>
-              )}
-              {food.tags && food.tags.length > 0 && (
-                <FoodTags>
-                  {food.tags.map((tag, index) => (
-                    <Tag key={index}>{tag}</Tag>
+        <>
+          {(() => {
+            const list = showRecommended ? getRecommendedFoods(foods) : foods;
+            const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
+            const currentPage = Math.min(Math.max(1, page), totalPages);
+            const start = (currentPage - 1) * pageSize;
+            const slice = list.slice(start, start + pageSize);
+            return (
+              <>
+                <FoodGrid>
+                  {slice.map(food => (
+                    <FoodCard key={food._id}>
+                      <FoodImage $imageUrl={food.image}>
+                        {!food.image && '이미지 없음'}
+                      </FoodImage>
+                      <FoodName>{food.name}</FoodName>
+                      <FoodCategory>{food.category}</FoodCategory>
+                      {food.description && (
+                        <FoodDescription>{food.description}</FoodDescription>
+                      )}
+                      {food.price && (
+                        <FoodPrice>₩{food.price.toLocaleString()}</FoodPrice>
+                      )}
+                      {food.tags && food.tags.length > 0 && (
+                        <FoodTags>
+                          {food.tags.map((tag, index) => (
+                            <Tag key={index}>{tag}</Tag>
+                          ))}
+                        </FoodTags>
+                      )}
+                      {food.rating > 0 && (
+                        <FoodRating>
+                          {renderStars(food.rating)} ({food.rating}/5)
+                        </FoodRating>
+                      )}
+                      {showRecommended && food.recommendationScore && (
+                        <div style={{ 
+                          marginTop: '8px', 
+                          padding: '4px 8px', 
+                          backgroundColor: '#e8f5e8', 
+                          borderRadius: '12px', 
+                          fontSize: '12px', 
+                          color: '#2e7d32',
+                          display: 'inline-block'
+                        }}>
+                          추천 점수: {food.recommendationScore.toFixed(1)}
+                        </div>
+                      )}
+                    </FoodCard>
                   ))}
-                </FoodTags>
-              )}
-              {food.rating > 0 && (
-                <FoodRating>
-                  {renderStars(food.rating)} ({food.rating}/5)
-                </FoodRating>
-              )}
-              {showRecommended && food.recommendationScore && (
-                <div style={{ 
-                  marginTop: '8px', 
-                  padding: '4px 8px', 
-                  backgroundColor: '#e8f5e8', 
-                  borderRadius: '12px', 
-                  fontSize: '12px', 
-                  color: '#2e7d32',
-                  display: 'inline-block'
-                }}>
-                  추천 점수: {food.recommendationScore.toFixed(1)}
-                </div>
-              )}
-            </FoodCard>
-          ))}
-        </FoodGrid>
+                </FoodGrid>
+                {(() => {
+                  const go = (p) => setPage(Math.min(Math.max(1, p), totalPages));
+                  const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+                  return (
+                    <div style={{ display:'flex', justifyContent:'center', gap:8, marginTop:16, flexWrap:'wrap' }}>
+                      <button
+                        onClick={() => go(currentPage - 1)}
+                        disabled={currentPage <= 1}
+                        style={{ padding:'6px 10px', borderRadius:999, border:'1px solid #cbd5e1', background:'#fff' }}
+                      >이전</button>
+                      {pages.map(p => (
+                        <button
+                          key={p}
+                          onClick={() => go(p)}
+                          style={{
+                            padding:'6px 10px', borderRadius:999,
+                            border:`1px solid ${p===currentPage?'#2563eb':'#cbd5e1'}`,
+                            background:p===currentPage?'#2563eb':'#fff', color:p===currentPage?'#fff':'#0f172a'
+                          }}
+                        >{p}</button>
+                      ))}
+                      <button
+                        onClick={() => go(currentPage + 1)}
+                        disabled={currentPage >= totalPages}
+                        style={{ padding:'6px 10px', borderRadius:999, border:'1px solid #cbd5e1', background:'#fff' }}
+                      >다음</button>
+                    </div>
+                  );
+                })()}
+              </>
+            );
+          })()}
+        </>
       )}
     </FoodListContainer>
   );

@@ -70,4 +70,49 @@ router.delete("/", (req, res) => {
   }
 });
 
+// GET /api/user/preferences/average-rating/:foodId
+// 모든 사용자 취향에서 해당 foodId의 평균 평점 계산
+router.get("/average-rating/:foodId", (req, res) => {
+  const { foodId } = req.params;
+  if (!foodId) return res.status(400).json({ success: false, message: "foodId is required" });
+  let sum = 0;
+  let count = 0;
+  Object.values(preferencesDB).forEach(pref => {
+    const r = pref?.ratings?.[foodId];
+    if (r && typeof r.rating === 'number') {
+      sum += Number(r.rating);
+      count += 1;
+    }
+  });
+  if (count === 0) return res.json({ success: true, foodId, average: null, count: 0 });
+  const avg = Math.round((sum / count) * 10) / 10;
+  res.json({ success: true, foodId, average: avg, count });
+});
+
+// GET /api/user/preferences/average-ratings?ids=a,b,c
+// 여러 foodId에 대한 평균 평점을 일괄 계산
+router.get("/average-ratings", (req, res) => {
+  const idsParam = String(req.query.ids || '').trim();
+  if (!idsParam) return res.status(400).json({ success: false, message: "ids is required" });
+  const ids = idsParam.split(',').map(s => s.trim()).filter(Boolean);
+  const result = {};
+  ids.forEach(foodId => {
+    let sum = 0;
+    let count = 0;
+    Object.values(preferencesDB).forEach(pref => {
+      const r = pref?.ratings?.[foodId];
+      if (r && typeof r.rating === 'number') {
+        sum += Number(r.rating);
+        count += 1;
+      }
+    });
+    if (count === 0) {
+      result[foodId] = null;
+    } else {
+      result[foodId] = Math.round((sum / count) * 10) / 10;
+    }
+  });
+  res.json({ success: true, averages: result });
+});
+
 export default router;

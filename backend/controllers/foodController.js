@@ -27,6 +27,7 @@ export const getAllFoods = async (req, res) => {
     }
     
     const foods = await Food.find(query).sort({ createdAt: -1 });
+    console.log(`[foodController] getAllFoods query=${JSON.stringify(query)} count=${foods.length}`);
     
     res.status(200).json({
       success: true,

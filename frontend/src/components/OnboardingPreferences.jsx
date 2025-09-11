@@ -83,10 +83,11 @@ export default function OnboardingPreferences({ onComplete }) {
   const [selectedTags, setSelectedTags] = useState([]);
   const [existingRatingsMap, setExistingRatingsMap] = useState({});
   const [hasPreferences, setHasPreferences] = useState(false);
-  // 검색/정렬/더보기
+  // 검색/정렬/페이지네이션
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState("popular"); // popular | name | category
-  const [visibleCount, setVisibleCount] = useState(12);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const [imageCache, setImageCache] = useState({});
 
   // Step1: 선택 가능한 음식 카테고리 목록
@@ -99,26 +100,16 @@ export default function OnboardingPreferences({ onComplete }) {
         const response = await getAllFoods({ available: true });
         const foods = response.data || [];
         setAvailableFoods(foods);
-        // Unsplash 이미지 미리 조회 (비동기 캐싱)
-        const entries = await Promise.all(foods.map(async (f) => {
-          if (f.image) return [f._id, f.image];
+        // 백엔드 캐시에서 배치 조회
+        const ids = foods.map(f => f._id).filter(Boolean);
+        if (ids.length) {
           try {
-            const r = await axios.get('https://api.unsplash.com/search/photos', {
-              params: { query: `${f.name} ${f.category || ''}`.trim(), per_page: 10 },
-              headers: { Authorization: `Client-ID ${import.meta.env.VITE_UNSPLASH_KEY}` },
-            });
-            const results = r.data.results || [];
-            if (results.length > 0) {
-              const idx = Math.floor(Math.random() * results.length);
-              return [f._id, results[idx].urls.small];
-            }
+            const r = await axios.get('http://localhost:4000/api/food-images', { params: { ids: ids.join(',') } });
+            setImageCache(r.data?.images || {});
           } catch (e) {
-            // 무시하고 기본값 유지
+            // 무시
           }
-          return [f._id, null];
-        }));
-        const cache = entries.reduce((acc, [id, url]) => { if (id) acc[id] = url; return acc; }, {});
-        setImageCache(cache);
+        }
         setLoading(false);
       } catch (error) {
         console.error("음식 데이터 가져오기 실패:", error);
@@ -127,7 +118,14 @@ export default function OnboardingPreferences({ onComplete }) {
     };
     const checkExisting = async () => {
       try {
-        const res = await axios.get("http://localhost:4000/api/user/preferences", { params: { userId: 'user123' } });
+        const res = await axios.get("http://localhost:4000/api/user/preferences", {
+          params: { userId: 'user123' },
+          validateStatus: (s) => (s >= 200 && s < 300) || s === 404,
+        });
+        if (res.status === 404) {
+          setHasPreferences(false);
+          return;
+        }
         if (res?.data?.ratings) {
           setExistingRatingsMap(res.data.ratings || {});
           setHasPreferences(true);
@@ -138,11 +136,7 @@ export default function OnboardingPreferences({ onComplete }) {
           window.dispatchEvent(new Event('preferences-updated'));
         }
       } catch (e) {
-        if (e.response?.status === 404) {
-          setHasPreferences(false);
-        } else {
-          console.error('기존 취향 확인 실패:', e);
-        }
+        console.error('기존 취향 확인 실패:', e);
       }
     };
 
@@ -357,12 +351,12 @@ export default function OnboardingPreferences({ onComplete }) {
                   type="text"
                   placeholder="음식 검색"
                   value={search}
-                  onChange={(e) => { setSearch(e.target.value); setVisibleCount(12); }}
+                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                   style={{ border:'1px solid #cbd5e1', borderRadius:8, padding:'6px 10px' }}
                 />
                 <select
                   value={sortKey}
-                  onChange={(e) => { setSortKey(e.target.value); setVisibleCount(12); }}
+                  onChange={(e) => { setSortKey(e.target.value); setPage(1); }}
                   style={{ border:'1px solid #cbd5e1', borderRadius:8, padding:'6px 10px' }}
                 >
                   <option value="popular">인기순</option>
@@ -370,40 +364,67 @@ export default function OnboardingPreferences({ onComplete }) {
                   <option value="category">카테고리순</option>
                 </select>
               </div>
-
-              {availableFoods
-                .filter(food => !Object.keys(existingRatingsMap).includes(food._id))
-                .filter(food => !search || food.name?.toLowerCase().includes(search.trim().toLowerCase()))
-                .sort((a,b) => {
-                  if (sortKey === 'name') return (a.name||'').localeCompare(b.name||'');
-                  if (sortKey === 'category') return (a.category||'').localeCompare(b.category||'');
-                  // popular: rating 내림차순, 없으면 0
-                  const ar = Number(a.rating||0);
-                  const br = Number(b.rating||0);
-                  return br - ar;
-                })
-                .slice(0, visibleCount)
-                .map(food => (
-                <FoodItem key={food._id}>
-                  <div style={{ width: '80px', height: '60px', backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', overflow:'hidden' }}>
-                    { (imageCache[food._id] || food.image) ? (
-                      <FoodImage src={imageCache[food._id] || food.image} alt={food.name} />
-                    ) : (
-                      <span style={{ fontSize: '12px', color: '#666' }}>이미지 없음</span>
-                    )}
+              {(() => {
+                const filtered = availableFoods
+                  .filter(food => !Object.keys(existingRatingsMap).includes(food._id))
+                  .filter(food => !search || food.name?.toLowerCase().includes(search.trim().toLowerCase()))
+                  .sort((a,b) => {
+                    if (sortKey === 'name') return (a.name||'').localeCompare(b.name||'');
+                    if (sortKey === 'category') return (a.category||'').localeCompare(b.category||'');
+                    // popular: rating 내림차순, 없으면 0
+                    const ar = Number(a.rating||0);
+                    const br = Number(b.rating||0);
+                    return br - ar;
+                  });
+                const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+                const currentPage = Math.min(Math.max(1, page), totalPages);
+                const start = (currentPage - 1) * pageSize;
+                const items = filtered.slice(start, start + pageSize);
+                return items.map(food => (
+                  <FoodItem key={food._id}>
+                    <div style={{ width: '80px', height: '60px', backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', overflow:'hidden' }}>
+                      { (imageCache[food._id] || food.image) ? (
+                        <FoodImage src={imageCache[food._id] || food.image} alt={food.name} />
+                      ) : (
+                        <span style={{ fontSize: '12px', color: '#666' }}>이미지 없음</span>
+                      )}
+                    </div>
+                    <FoodName>{food.name} ({food.category})</FoodName>
+                    <StarRating
+                      value={ratings[food._id]?.rating || 0}
+                      onChange={(v) => handleRating(food._id, v)}
+                      size={22}
+                    />
+                  </FoodItem>
+                ));
+              })()}
+              {(() => {
+                const filteredCount = availableFoods
+                  .filter(food => !Object.keys(existingRatingsMap).includes(food._id))
+                  .filter(food => !search || food.name?.toLowerCase().includes(search.trim().toLowerCase()))
+                  .length;
+                const totalPages = Math.max(1, Math.ceil(filteredCount / pageSize));
+                const go = (p) => setPage(Math.min(Math.max(1, p), totalPages));
+                const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+                return (
+                  <div style={{ display:'flex', justifyContent:'center', gap:8, marginTop:8, flexWrap:'wrap' }}>
+                    <Button onClick={() => go(page - 1)} disabled={page <= 1}>이전</Button>
+                    {pages.map(p => (
+                      <button
+                        key={p}
+                        onClick={() => go(p)}
+                        style={{
+                          padding:'6px 10px', borderRadius:999,
+                          border:`1px solid ${p===page?'#2563eb':'#cbd5e1'}`,
+                          background:p===page?'#2563eb':'#fff', color:p===page?'#fff':'#0f172a'
+                        }}
+                      >{p}</button>
+                    ))}
+                    <Button onClick={() => go(page + 1)} disabled={page >= totalPages}>다음</Button>
                   </div>
-                  <FoodName>{food.name} ({food.category})</FoodName>
-                  <StarRating
-                    value={ratings[food._id]?.rating || 0}
-                    onChange={(v) => handleRating(food._id, v)}
-                    size={22}
-                  />
-                </FoodItem>
-              ))}
-              <div style={{ display:'flex', justifyContent:'center' }}>
-                <Button onClick={() => setVisibleCount(c => c + 12)}>더 보기</Button>
-              </div>
-              <Button onClick={() => hasPreferences ? saveStep2AndFinish() : setStep(3)}>다음</Button>
+                );
+              })()}
+              <Button onClick={saveStep2AndFinish}>완료</Button>
             </>
           )}
         </div>

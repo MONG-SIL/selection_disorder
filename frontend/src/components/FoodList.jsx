@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import styled from 'styled-components';
 import { getAllFoods, getFoodsByCategory } from '../services/foodApi';
 import axios from 'axios';
+import RecipeModal from './RecipeModal';
+import { ChefHat } from 'lucide-react';
 
 const FoodListContainer = styled.div`
   padding: 20px;
@@ -91,6 +93,8 @@ const FoodImage = styled.div`
   background-image: ${props => props.$imageUrl ? `url(${props.$imageUrl})` : 'none'};
   background-size: cover;
   background-position: center;
+  position: relative;
+  overflow: hidden;
 `;
 
 const FoodName = styled.h3`
@@ -115,6 +119,31 @@ const FoodDescription = styled.p`
   font-size: 14px;
   line-height: 1.5;
   margin-bottom: 10px;
+`;
+
+const RecipeButton = styled.button`
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  margin-top: 10px;
+  
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  }
+  
+  &:active {
+    transform: translateY(0);
+  }
 `;
 
 const FoodPrice = styled.div`
@@ -180,12 +209,21 @@ const FoodList = () => {
   const [userPreferences, setUserPreferences] = useState(null);
   const [showRecommended, setShowRecommended] = useState(false);
   const [page, setPage] = useState(1);
+  const [selectedRecipe, setSelectedRecipe] = useState(null);
+  const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
+  const [loadingRecipes, setLoadingRecipes] = useState(new Set());
+  const [imageErrors, setImageErrors] = useState(new Set());
   const pageSize = 10;
   const searchInputRef = useRef(null);
   const debounceTimeoutRef = useRef(null);
 
   const categories = ['전체', '한식', '중식', '일식', '양식', '기타'];
   const userId = "user123"; // 실제로는 로그인된 사용자 ID 사용
+
+  // 이미지 로딩 실패 처리
+  const handleImageError = (foodId) => {
+    setImageErrors(prev => new Set(prev).add(foodId));
+  };
 
   // 디바운싱된 검색 함수
   const debouncedFetchFoods = useCallback(() => {
@@ -198,14 +236,41 @@ const FoodList = () => {
     }, 2000); // 300ms 디바운스
   }, [selectedCategory, searchTerm]);
 
-  // Unsplash 이미지 검색
-  const fetchFoodImagesBatch = async (foodIds) => {
+  // Spoonacular 레시피 및 이미지 검색
+  const fetchFoodRecipesBatch = async (foodIds) => {
     try {
-      const res = await axios.get('http://localhost:4000/api/food-images', { params: { ids: foodIds.join(',') } });
-      return res.data?.images || {};
+      const res = await axios.get('http://localhost:4000/api/food-recipes', { params: { ids: foodIds.join(',') } });
+      return res.data?.recipes || {};
     } catch (e) {
-      console.error('이미지 배치 조회 실패:', e);
+      console.error('레시피 배치 조회 실패:', e);
       return {};
+    }
+  };
+
+  // 개별 레시피 조회
+  const fetchRecipe = async (foodId) => {
+    console.log('레시피 조회 시작:', foodId);
+    setLoadingRecipes(prev => new Set(prev).add(foodId));
+    try {
+      const res = await axios.get(`http://localhost:4000/api/food-recipes/${foodId}`);
+      console.log('레시피 응답:', res.data);
+      if (res.data?.success) {
+        console.log('레시피 데이터:', res.data.recipe);
+        setSelectedRecipe(res.data.recipe);
+        setIsRecipeModalOpen(true);
+      } else {
+        console.log('레시피 조회 실패:', res.data?.message);
+        alert('레시피를 찾을 수 없습니다.');
+      }
+    } catch (e) {
+      console.error('레시피 조회 실패:', e);
+      alert('레시피를 불러오는데 실패했습니다.');
+    } finally {
+      setLoadingRecipes(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(foodId);
+        return newSet;
+      });
     }
   };
 
@@ -273,14 +338,15 @@ const FoodList = () => {
       const foods = response.data;
       const ids = foods.map(f => f._id).filter(Boolean);
       const averages = ids.length ? await fetchAverageRatings(ids) : {};
-      const images = ids.length ? await fetchFoodImagesBatch(ids) : {};
-      const withImages = foods.map((food) => {
+      const recipes = ids.length ? await fetchFoodRecipesBatch(ids) : {};
+      const withRecipes = foods.map((food) => {
         const avg = averages[food._id];
         const rating = typeof avg === 'number' ? avg : 2.5;
-        const image = food.image || images[food._id] || null;
-        return { ...food, image, rating };
+        const recipeData = recipes[food._id];
+        const image = food.image || recipeData?.imageUrl || null;
+        return { ...food, image, rating, recipe: recipeData?.recipe };
       });
-      setFoods(withImages);
+      setFoods(withRecipes);
     } catch (err) {
       setError('음식 리스트를 가져오는데 실패했습니다.');
       console.error('Error fetching foods:', err);
@@ -422,8 +488,18 @@ const FoodList = () => {
                 <FoodGrid>
                   {slice.map(food => (
                     <FoodCard key={food._id}>
-                      <FoodImage $imageUrl={food.image}>
-                        {!food.image && '이미지 없음'}
+                      <FoodImage 
+                        $imageUrl={food.image && !imageErrors.has(food._id) ? food.image : null}
+                        onError={() => handleImageError(food._id)}
+                      >
+                        {(!food.image || imageErrors.has(food._id)) && (
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '48px', marginBottom: '8px' }}>🍽️</div>
+                            <div style={{ fontSize: '14px', color: '#999' }}>
+                              {imageErrors.has(food._id) ? '이미지 로딩 실패' : '이미지 없음'}
+                            </div>
+                          </div>
+                        )}
                       </FoodImage>
                       <FoodName>{food.name}</FoodName>
                       <FoodCategory>{food.category}</FoodCategory>
@@ -458,6 +534,13 @@ const FoodList = () => {
                           추천 점수: {food.recommendationScore.toFixed(1)}
                         </div>
                       )}
+                      <RecipeButton 
+                        onClick={() => fetchRecipe(food._id)}
+                        disabled={loadingRecipes.has(food._id)}
+                      >
+                        <ChefHat size={16} />
+                        {loadingRecipes.has(food._id) ? '로딩중...' : '레시피 보기'}
+                      </RecipeButton>
                     </FoodCard>
                   ))}
                 </FoodGrid>
@@ -495,6 +578,16 @@ const FoodList = () => {
           })()}
         </>
       )}
+      
+      {/* 레시피 모달 */}
+      <RecipeModal
+        recipe={selectedRecipe}
+        isOpen={isRecipeModalOpen}
+        onClose={() => {
+          setIsRecipeModalOpen(false);
+          setSelectedRecipe(null);
+        }}
+      />
     </FoodListContainer>
   );
 };

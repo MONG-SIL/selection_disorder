@@ -7,10 +7,20 @@ let preferencesDB = {}; // userId별로 저장
 router.get("/", (req, res) => {
   console.log("[preferences][GET] query:", req.query);
   const { userId } = req.query;
-  if (!userId || !preferencesDB[userId]) {
-    return res.status(404).json({ success: false, message: "No preferences found" });
+  if (!userId) {
+    return res.status(400).json({ success: false, message: "userId is required" });
   }
-  res.json(preferencesDB[userId]);
+  if (!preferencesDB[userId]) {
+    return res.status(200).json({ 
+      success: true, 
+      message: "No preferences found",
+      data: null 
+    });
+  }
+  res.json({ 
+    success: true, 
+    data: preferencesDB[userId] 
+  });
 });
 
 // POST /api/user/preferences (전체 취향 저장/덮어쓰기)

@@ -100,14 +100,22 @@ export default function OnboardingPreferences({ onComplete }) {
         const response = await getAllFoods({ available: true });
         const foods = response.data || [];
         setAvailableFoods(foods);
-        // 백엔드 캐시에서 배치 조회
+        // 백엔드 캐시에서 배치 조회 (새로운 food-recipes API 사용)
         const ids = foods.map(f => f._id).filter(Boolean);
         if (ids.length) {
           try {
-            const r = await axios.get('http://localhost:4000/api/food-images', { params: { ids: ids.join(',') } });
-            setImageCache(r.data?.images || {});
+            const r = await axios.get('http://localhost:4000/api/food-recipes', { params: { ids: ids.join(',') } });
+            const recipes = r.data?.recipes || {};
+            // 이미지 URL만 추출하여 캐시에 저장
+            const imageCache = {};
+            Object.keys(recipes).forEach(id => {
+              if (recipes[id].imageUrl) {
+                imageCache[id] = recipes[id].imageUrl;
+              }
+            });
+            setImageCache(imageCache);
           } catch (e) {
-            // 무시
+            console.error('이미지 캐시 조회 실패:', e);
           }
         }
         setLoading(false);

@@ -8,6 +8,7 @@ import foodRoutes from "./routes/food.js";
 import gptRoutes from "./routes/gpt.js";
 import popularFoodsRoutes from "./routes/popularFoods.js";
 import foodImagesRoutes from "./routes/foodImages.js";
+import foodRecipesRoutes from "./routes/foodRecipes.js";
 import weatherRecommendRoutes from "./routes/weatherRecommend.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
@@ -35,6 +36,7 @@ app.use("/api/food", foodRoutes);
 app.use("/api/gpt", gptRoutes);
 app.use("/api", popularFoodsRoutes);
 app.use("/api/food-images", foodImagesRoutes);
+app.use("/api/food-recipes", foodRecipesRoutes);
 app.use("/api/weather-recommend", weatherRecommendRoutes);
 
 

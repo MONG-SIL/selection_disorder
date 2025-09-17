@@ -160,6 +160,7 @@ const seedDatabase = async () => {
     await Food.deleteMany({});
     console.log("기존 음식 데이터 삭제 완료");
 
+    
     // 샘플 데이터 삽입
     const insertedFoods = await Food.insertMany(sampleFoods);
     console.log(`${insertedFoods.length}개의 음식 데이터가 성공적으로 추가되었습니다.`);

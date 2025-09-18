@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import styled from "styled-components";
 import { useEffect, useState } from "react";
-import axios from "axios";
+import { logout, getToken } from "../services/authApi";
 
 const NavBar = styled.nav`
   position: fixed;
@@ -26,27 +26,49 @@ const NavLink = styled(Link)`
   }
 `;
 
+const LogoutButton = styled.button`
+  background: none;
+  border: none;
+  color: #dc2626;
+  text-decoration: none;
+  font-weight: 500;
+  cursor: pointer;
+  font-size: inherit;
+
+  &:hover {
+    text-decoration: underline;
+  }
+`;
+
 export default function Navigation() {
   const [hasPreferences, setHasPreferences] = useState(false);
-  const userId = "user123";
+  const [user, setUser] = useState(null);
   const location = useLocation();
 
   useEffect(() => {
     const checkPreferences = async () => {
       try {
-        const res = await axios.get("http://localhost:4000/api/user/preferences", {
-          params: { userId },
+        const token = getToken();
+        if (!token) return;
+        
+        const res = await fetch("http://localhost:4000/api/user/preferences", {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
         });
-        setHasPreferences(!!res.data);
-      } catch (e) {
-        if (e.response?.status === 404) {
-          setHasPreferences(false);
+        
+        if (res.ok) {
+          const data = await res.json();
+          setHasPreferences(!!data.data);
         } else {
           setHasPreferences(false);
-          console.error("취향 확인 실패:", e);
         }
+      } catch (e) {
+        setHasPreferences(false);
+        console.error("취향 확인 실패:", e);
       }
     };
+    
     // 우선 localStorage 플래그 확인
     const flag = typeof window !== 'undefined' && window.localStorage?.getItem('hasPreferences') === 'true';
     if (flag) {
@@ -79,6 +101,10 @@ export default function Navigation() {
     setHasPreferences(flag);
   }, [location]);
 
+  const handleLogout = () => {
+    logout();
+  };
+
   return (
     <NavBar>
       <NavLink to="/">Home</NavLink>
@@ -88,6 +114,7 @@ export default function Navigation() {
       <NavLink to="/onboarding">Preferences</NavLink>
       {hasPreferences && <NavLink to="/preferences">My</NavLink>}
       <NavLink to="/chat">Chat</NavLink>
+      <LogoutButton onClick={handleLogout}>로그아웃</LogoutButton>
     </NavBar>
   );
 }

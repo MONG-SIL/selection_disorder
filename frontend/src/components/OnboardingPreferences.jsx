@@ -126,8 +126,11 @@ export default function OnboardingPreferences({ onComplete }) {
     };
     const checkExisting = async () => {
       try {
+        const token = localStorage.getItem('token');
         const res = await axios.get("http://localhost:4000/api/user/preferences", {
-          params: { userId: 'user123' },
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
           validateStatus: (s) => (s >= 200 && s < 300) || s === 404,
         });
         if (res.status === 404) {
@@ -205,24 +208,35 @@ export default function OnboardingPreferences({ onComplete }) {
     }
   };
 
-  // 두 번째 접속(기존 취향 존재) 시: 2단계에서 별점 저장 후 홈으로 이동
+  // 2단계 완료 시: 별점 저장 후 3단계로 이동
   const saveStep2AndFinish = async () => {
     try {
       const entries = Object.entries(ratings || {}).filter(([_, v]) => Number(v?.rating) > 0);
-      if (entries.length === 0) {
-        navigate('/');
+      console.log('2단계 저장 시작 - 평가된 음식 수:', entries.length);
+      
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.error('토큰이 없습니다.');
         return;
       }
-      const userId = 'user123';
+      
       // 현재 저장된 전체 취향 불러오기 (없으면 기본값)
       let current = { categories: [], ratings: {}, customFoods: [], tags: [] };
       try {
-        const res = await axios.get('http://localhost:4000/api/user/preferences', { params: { userId } });
-        current = res.data || current;
+        console.log('기존 취향 조회 중...');
+        const res = await axios.get('http://localhost:4000/api/user/preferences', { 
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        current = res.data.data || res.data || current;
+        console.log('기존 취향 조회 성공:', current);
       } catch (e) {
         // 404면 신규 생성 케이스로 간주
         if (e.response?.status !== 404) {
           console.error('기존 취향 조회 실패:', e);
+        } else {
+          console.log('기존 취향 없음 - 신규 생성');
         }
       }
 
@@ -233,25 +247,55 @@ export default function OnboardingPreferences({ onComplete }) {
       });
 
       const body = {
-        userId,
         categories: current.categories || [],
         ratings: mergedRatings,
         customFoods: current.customFoods || [],
         tags: current.tags || [],
       };
-      await axios.post('http://localhost:4000/api/user/preferences', body);
+      
+      console.log('2단계 저장 요청 데이터:', body);
+      console.log('API 요청 전송 중...');
+      
+      const response = await axios.post('http://localhost:4000/api/user/preferences', body, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      console.log('2단계 저장 성공:', response.data);
+      
+      // 새로 평가한 음식들을 existingRatingsMap에 추가하여 다시 나타나지 않도록 함
+      const newExistingRatings = { ...existingRatingsMap };
+      entries.forEach(([foodId, r]) => {
+        newExistingRatings[foodId] = r;
+      });
+      setExistingRatingsMap(newExistingRatings);
+      
       // 네비바와 다른 탭 동기화
       window.localStorage.setItem('hasPreferences', 'true');
       window.dispatchEvent(new Event('preferences-updated'));
-      navigate('/');
+      
+      // 기존 취향이 있으면 홈으로, 없으면 3단계로 이동
+      if (hasPreferences) {
+        navigate('/');
+      } else {
+        setStep(3);
+      }
     } catch (e) {
       console.error('2단계 저장 실패:', e);
-      navigate('/');
+      // 오류가 발생해도 기존 취향이 있으면 홈으로, 없으면 3단계로 이동
+      if (hasPreferences) {
+        navigate('/');
+      } else {
+        setStep(3);
+      }
     }
   };
 
   // 완료 버튼 클릭 시 호출되는 함수
   const handleFinish = async () => {
+    const token = localStorage.getItem('token');
+    
     // customFoods를 쉼표로 분리
     const customFoodsArr = customFoods
       .split(",")
@@ -274,7 +318,6 @@ export default function OnboardingPreferences({ onComplete }) {
     const finalTags = Array.from(new Set([...(selectedTags || []), ...suggestedTags]));
 
     const data = {
-      userId: "user123", // 실제 로그인/회원가입 시 할당된 ID 사용
       categories: finalCategories,
       ratings: updatedRatings,
       customFoods: customFoodsArr,
@@ -284,7 +327,11 @@ export default function OnboardingPreferences({ onComplete }) {
     console.log("최종 취향 데이터:", data);
     
     try {
-      const res = await axios.post("http://localhost:4000/api/user/preferences", data);
+      const res = await axios.post("http://localhost:4000/api/user/preferences", data, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
       console.log("서버 저장 결과:", res.data);
       
       // 취향 데이터를 Food 데이터에 반영하는 API 호출

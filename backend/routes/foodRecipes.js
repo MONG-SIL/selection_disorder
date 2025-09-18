@@ -1,6 +1,6 @@
 import express from 'express';
 import axios from 'axios';
-import FoodRecipeCache from '../models/FoodImageCache.js';
+import FoodRecipeCache from '../models/FoodRecipeCache.js';
 import Food from '../models/Food.js';
 
 const router = express.Router();
@@ -158,6 +158,30 @@ const cleanupExpiredCache = async () => {
 // 1시간마다 만료된 캐시 정리
 setInterval(cleanupExpiredCache, 60 * 60 * 1000);
 
+// Unsplash API로 이미지 검색
+const searchUnsplashImage = async (query) => {
+  try {
+    const response = await axios.get('https://api.unsplash.com/search/photos', {
+      params: {
+        query: query,
+        per_page: 1,
+        orientation: 'landscape'
+      },
+      headers: {
+        'Authorization': `Client-ID ${process.env.UNSPLASH_ACCESS_KEY}`
+      }
+    });
+    
+    if (response.data.results && response.data.results.length > 0) {
+      return response.data.results[0].urls.regular;
+    }
+    return null;
+  } catch (error) {
+    console.error('Unsplash API error:', error.message);
+    return null;
+  }
+};
+
 const getUniqueRecipe = async (queries, searchTerms, usedIds = new Set()) => {
   // API 키가 없거나 402 에러가 발생한 경우 즉시 fallback 반환
   if (!process.env.SPOONACULAR_API_KEY) {
@@ -242,10 +266,15 @@ router.get('/:foodId', async (req, res) => {
     
     if (cached?.imageUrl) {
       console.log('유효한 캐시된 Spoonacular 데이터 사용:', cached.imageUrl);
+      // 캐시된 레시피에 provider 정보 추가
+      const recipeWithProvider = {
+        ...cached.recipe,
+        provider: cached.provider || 'spoonacular'
+      };
       return res.json({ 
         success: true, 
         imageUrl: cached.overrideUrl || cached.imageUrl,
-        recipe: cached.recipe,
+        recipe: recipeWithProvider,
         cached: true 
       });
     }
@@ -269,7 +298,7 @@ router.get('/:foodId', async (req, res) => {
     console.log('찾은 레시피:', bestRecipe?.title, imageUrl);
 
     if (!bestRecipe || !imageUrl) {
-      console.log('레시피를 찾을 수 없음 - 기본 이미지 제공');
+      console.log('레시피를 찾을 수 없음 - Unsplash에서 이미지 검색 시도');
       // 기본 이미지와 간단한 레시피 정보 제공
       const fallbackRecipe = {
         id: 'fallback',
@@ -285,11 +314,22 @@ router.get('/:foodId', async (req, res) => {
         readyInMinutes: 30,
         servings: 1,
         difficulty: 'medium',
-        summary: `${food.name}에 대한 레시피 정보를 찾을 수 없습니다.`
+        summary: `${food.name}에 대한 레시피 정보를 찾을 수 없습니다.`,
+        provider: 'fallback'
       };
 
-      // 기본 이미지 URL (Unsplash의 기본 이미지 사용)
-      const fallbackImageUrl = `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop&crop=center`;
+      // Unsplash에서 이미지 검색
+      let fallbackImageUrl = `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop&crop=center`;
+      
+      if (process.env.UNSPLASH_ACCESS_KEY) {
+        const unsplashImage = await searchUnsplashImage(food.name);
+        if (unsplashImage) {
+          fallbackImageUrl = unsplashImage;
+          console.log('Unsplash에서 이미지 검색 성공:', unsplashImage);
+        } else {
+          console.log('Unsplash에서도 이미지를 찾지 못함 - 기본 이미지 사용');
+        }
+      }
 
       // 캐시에 저장
       await FoodRecipeCache.create({
@@ -331,25 +371,26 @@ router.get('/:foodId', async (req, res) => {
       console.error('Spoonacular detail API error:', detailError.message);
     }
 
-    // 레시피 데이터 정리
-    const recipeData = {
-      id: bestRecipe.id,
-      title: bestRecipe.title,
-      instructions: detailedRecipe?.instructions ? 
-        detailedRecipe.instructions.map(inst => inst.step) : [],
-      ingredients: detailedRecipe?.extendedIngredients ? 
-        detailedRecipe.extendedIngredients.map(ing => `${ing.amount} ${ing.unit} ${ing.name}`) : [],
-      nutrition: {
-        calories: detailedRecipe?.nutrition?.nutrients?.find(n => n.name === 'Calories')?.amount || 0,
-        protein: detailedRecipe?.nutrition?.nutrients?.find(n => n.name === 'Protein')?.amount || 0,
-        carbs: detailedRecipe?.nutrition?.nutrients?.find(n => n.name === 'Carbohydrates')?.amount || 0,
-        fat: detailedRecipe?.nutrition?.nutrients?.find(n => n.name === 'Fat')?.amount || 0
-      },
-      readyInMinutes: bestRecipe.readyInMinutes || 0,
-      servings: bestRecipe.servings || 1,
-      difficulty: bestRecipe.difficulty || 'medium',
-      summary: detailedRecipe?.summary || ''
-    };
+        // 레시피 데이터 정리
+        const recipeData = {
+          id: bestRecipe.id,
+          title: bestRecipe.title,
+          instructions: detailedRecipe?.instructions && Array.isArray(detailedRecipe.instructions) ? 
+            detailedRecipe.instructions.map(inst => inst.step) : [],
+          ingredients: detailedRecipe?.extendedIngredients && Array.isArray(detailedRecipe.extendedIngredients) ? 
+            detailedRecipe.extendedIngredients.map(ing => `${ing.amount} ${ing.unit} ${ing.name}`) : [],
+          nutrition: {
+            calories: detailedRecipe?.nutrition?.nutrients?.find(n => n.name === 'Calories')?.amount || 0,
+            protein: detailedRecipe?.nutrition?.nutrients?.find(n => n.name === 'Protein')?.amount || 0,
+            carbs: detailedRecipe?.nutrition?.nutrients?.find(n => n.name === 'Carbohydrates')?.amount || 0,
+            fat: detailedRecipe?.nutrition?.nutrients?.find(n => n.name === 'Fat')?.amount || 0
+          },
+          readyInMinutes: bestRecipe.readyInMinutes || 0,
+          servings: bestRecipe.servings || 1,
+          difficulty: bestRecipe.difficulty || 'medium',
+          summary: detailedRecipe?.summary || '',
+          provider: 'spoonacular'
+        };
 
     // 캐시 저장
     await FoodRecipeCache.create({
@@ -408,7 +449,10 @@ router.get('/', async (req, res) => {
     const cachedMap = caches.reduce((acc, c) => {
       acc[String(c.foodId)] = {
         imageUrl: c.overrideUrl || c.imageUrl,
-        recipe: c.recipe
+        recipe: {
+          ...c.recipe,
+          provider: c.provider || 'spoonacular'
+        }
       };
       return acc;
     }, {});
@@ -454,9 +498,9 @@ router.get('/', async (req, res) => {
         const recipeData = {
           id: bestRecipe.id,
           title: bestRecipe.title,
-          instructions: detailedRecipe?.instructions ? 
+          instructions: detailedRecipe?.instructions && Array.isArray(detailedRecipe.instructions) ? 
             detailedRecipe.instructions.map(inst => inst.step) : [],
-          ingredients: detailedRecipe?.extendedIngredients ? 
+          ingredients: detailedRecipe?.extendedIngredients && Array.isArray(detailedRecipe.extendedIngredients) ? 
             detailedRecipe.extendedIngredients.map(ing => `${ing.amount} ${ing.unit} ${ing.name}`) : [],
           nutrition: {
             calories: detailedRecipe?.nutrition?.nutrients?.find(n => n.name === 'Calories')?.amount || 0,
@@ -491,7 +535,7 @@ router.get('/', async (req, res) => {
         };
       } else {
         // 레시피를 찾지 못한 경우 기본 정보 제공
-        console.log(`음식 ${id}에 대한 레시피를 찾지 못함 - 기본 정보 제공`);
+        console.log(`음식 ${id}에 대한 레시피를 찾지 못함 - Unsplash에서 이미지 검색 시도`);
         const fallbackRecipe = {
           id: 'fallback',
           title: food.name,
@@ -506,10 +550,22 @@ router.get('/', async (req, res) => {
           readyInMinutes: 30,
           servings: 1,
           difficulty: 'medium',
-          summary: `${food.name}에 대한 레시피 정보를 찾을 수 없습니다.`
+          summary: `${food.name}에 대한 레시피 정보를 찾을 수 없습니다.`,
+          provider: 'fallback'
         };
 
-        const fallbackImageUrl = `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop&crop=center`;
+        // Unsplash에서 이미지 검색
+        let fallbackImageUrl = `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop&crop=center`;
+        
+        if (process.env.UNSPLASH_ACCESS_KEY) {
+          const unsplashImage = await searchUnsplashImage(food.name);
+          if (unsplashImage) {
+            fallbackImageUrl = unsplashImage;
+            console.log(`Unsplash에서 이미지 검색 성공 (${food.name}):`, unsplashImage);
+          } else {
+            console.log(`Unsplash에서도 이미지를 찾지 못함 (${food.name}) - 기본 이미지 사용`);
+          }
+        }
 
         // 캐시에 저장
         await FoodRecipeCache.create({
@@ -536,9 +592,12 @@ router.get('/', async (req, res) => {
     res.json({ success: true, recipes: result });
   } catch (error) {
     console.error('[food-recipes][batch] error:', error);
+    console.error('Error details:', error.message);
+    console.error('Stack trace:', error.stack);
     res.status(500).json({ 
       success: false, 
-      message: 'Internal server error' 
+      message: 'Internal server error',
+      error: error.message 
     });
   }
 });

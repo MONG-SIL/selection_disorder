@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
-import { signup } from "../services/authApi";
+import { login } from "../services/authApi";
 
 const Container = styled.div`
   display: flex;
@@ -121,8 +121,11 @@ const StyledInput = styled(Input)`
   }
 `;
 
-export default function Signup() {
-  const [userInfo, setUserInfo] = useState({ username: "", email: "", password: "" });
+export default function Login() {
+  const [credentials, setCredentials] = useState({
+    username: "",
+    password: ""
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [validationErrors, setValidationErrors] = useState({});
@@ -130,87 +133,29 @@ export default function Signup() {
 
   // 입력 형식 검증 함수들
   const validateUsername = (username) => {
-    const usernameRegex = /^[a-zA-Z0-9]{4,20}$/;
-    if (!username || username.trim() === "") return "사용자명을 입력해주세요.";
-    if (!usernameRegex.test(username.trim())) return "4-20자의 영문, 숫자만 사용 가능합니다.";
-    return null;
-  };
-
-  const validateEmail = (email) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!email || email.trim() === "") return "이메일을 입력해주세요.";
-    if (!emailRegex.test(email.trim())) return "올바른 이메일 형식을 입력해주세요.";
+    if (!username) return "사용자명을 입력해주세요.";
     return null;
   };
 
   const validatePassword = (password) => {
-    if (!password || password.trim() === "") return "비밀번호를 입력해주세요.";
-    if (password.trim().length < 6) return "비밀번호는 6자 이상이어야 합니다.";
+    if (!password) return "비밀번호를 입력해주세요.";
     return null;
   };
 
-  const validateForm = () => {
-    const errors = {};
-    const usernameError = validateUsername(userInfo.username);
-    const emailError = validateEmail(userInfo.email);
-    const passwordError = validatePassword(userInfo.password);
-
-    if (usernameError) errors.username = usernameError;
-    if (emailError) errors.email = emailError;
-    if (passwordError) errors.password = passwordError;
-
-    setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const handleSignup = async (e) => {
-    e.preventDefault();
-    setError("");
-    setValidationErrors({});
-
-    // 폼 검증
-    if (!validateForm()) {
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      // 데이터 trim 처리
-      const trimmedUserInfo = {
-        username: userInfo.username.trim(),
-        email: userInfo.email.trim(),
-        password: userInfo.password.trim()
-      };
-      console.log("전송할 데이터:", trimmedUserInfo);
-      await signup(trimmedUserInfo);
-      alert("회원가입이 완료되었습니다! 로그인해주세요.");
-      navigate("/login"); // 로그인 페이지로 이동
-    } catch (err) {
-      setError(err.response?.data?.error || "회원가입에 실패했습니다.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-
-  const goToLogin = () => {
-    navigate("/login");
-  };
-
-  const handleInputChange = (field, value) => {
-    setUserInfo({ ...userInfo, [field]: value });
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setCredentials({
+      ...credentials,
+      [name]: value
+    });
     
     // 실시간 검증
     const errors = { ...validationErrors };
     let error = null;
     
-    switch (field) {
+    switch (name) {
       case 'username':
         error = validateUsername(value);
-        break;
-      case 'email':
-        error = validateEmail(value);
         break;
       case 'password':
         error = validatePassword(value);
@@ -218,27 +163,68 @@ export default function Signup() {
     }
     
     if (error) {
-      errors[field] = error;
+      errors[name] = error;
     } else {
-      delete errors[field];
+      delete errors[name];
     }
     
     setValidationErrors(errors);
   };
 
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setValidationErrors({});
+
+    // 폼 검증
+    const errors = {};
+    const usernameError = validateUsername(credentials.username);
+    const passwordError = validatePassword(credentials.password);
+
+    if (usernameError) errors.username = usernameError;
+    if (passwordError) errors.password = passwordError;
+
+    if (Object.keys(errors).length > 0) {
+      setValidationErrors(errors);
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // 데이터 trim 처리
+      const trimmedCredentials = {
+        username: credentials.username.trim(),
+        password: credentials.password.trim()
+      };
+      console.log("로그인 전송할 데이터:", trimmedCredentials);
+      await login(trimmedCredentials);
+      navigate("/");
+    } catch (err) {
+      setError(err.response?.data?.error || "로그인에 실패했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const goToSignup = () => {
+    navigate("/signup");
+  };
+
   return (
     <Container>
       <FormContainer>
-        <Title>🍴 회원가입</Title>
-        <Form onSubmit={handleSignup}>
+        <Title>🍴 로그인</Title>
+        <Form onSubmit={handleSubmit}>
           <InputContainer>
             <InputLabel>사용자명</InputLabel>
             <InputExample>예시: mongsil0601</InputExample>
             <StyledInput
               type="text"
+              name="username"
               placeholder="사용자명을 입력하세요"
-              value={userInfo.username}
-              onChange={e => handleInputChange('username', e.target.value)}
+              value={credentials.username}
+              onChange={handleChange}
               hasError={!!validationErrors.username}
               required
             />
@@ -248,29 +234,14 @@ export default function Signup() {
           </InputContainer>
 
           <InputContainer>
-            <InputLabel>이메일</InputLabel>
-            <InputExample>예시: mongsil0601@example.com</InputExample>
-            <StyledInput
-              type="email"
-              placeholder="이메일을 입력하세요"
-              value={userInfo.email}
-              onChange={e => handleInputChange('email', e.target.value)}
-              hasError={!!validationErrors.email}
-              required
-            />
-            {validationErrors.email && (
-              <ValidationError>{validationErrors.email}</ValidationError>
-            )}
-          </InputContainer>
-
-          <InputContainer>
             <InputLabel>비밀번호</InputLabel>
-            <InputExample>6자 이상 입력하세요</InputExample>
+            <InputExample>비밀번호를 입력하세요</InputExample>
             <StyledInput
               type="password"
+              name="password"
               placeholder="비밀번호를 입력하세요"
-              value={userInfo.password}
-              onChange={e => handleInputChange('password', e.target.value)}
+              value={credentials.password}
+              onChange={handleChange}
               hasError={!!validationErrors.password}
               required
             />
@@ -280,12 +251,12 @@ export default function Signup() {
           </InputContainer>
 
           <Button type="submit" disabled={loading || Object.keys(validationErrors).length > 0}>
-            {loading ? "회원가입 중..." : "회원가입"}
+            {loading ? "로그인 중..." : "로그인"}
           </Button>
         </Form>
         {error && <ErrorMessage>{error}</ErrorMessage>}
-        <LinkButton onClick={goToLogin}>
-          이미 계정이 있으신가요? 로그인
+        <LinkButton onClick={goToSignup}>
+          계정이 없으신가요? 회원가입
         </LinkButton>
       </FormContainer>
     </Container>

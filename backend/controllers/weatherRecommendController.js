@@ -59,7 +59,8 @@ const weatherFoodMapping = {
 // 날씨 조건에 맞는 음식 추천 함수
 export const getWeatherBasedRecommendations = async (req, res) => {
   try {
-    const { temperature, description, userId = "user123", foodType = "main" } = req.query;
+    const { temperature, description, foodType = "main" } = req.query;
+    const userId = req.user?.userId; // 토큰에서 추출
     
     if (!temperature || !description) {
       return res.status(400).json({

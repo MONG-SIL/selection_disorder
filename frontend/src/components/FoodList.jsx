@@ -218,7 +218,18 @@ const FoodList = () => {
   const debounceTimeoutRef = useRef(null);
 
   const categories = ['전체', '한식', '중식', '일식', '양식', '기타'];
-  const userId = "user123"; // 실제로는 로그인된 사용자 ID 사용
+  // 토큰에서 사용자 ID를 가져오는 함수
+  const getUserId = () => {
+    const token = localStorage.getItem('token');
+    if (!token) return null;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.userId;
+    } catch (error) {
+      console.error('토큰 파싱 오류:', error);
+      return null;
+    }
+  };
 
   // 이미지 로딩 실패 처리
   const handleImageError = (foodId) => {
@@ -304,8 +315,11 @@ const FoodList = () => {
     if (!showRecommended) return; // 추천 모드일 때만 불러오기
     const fetchUserPreferences = async () => {
       try {
+        const token = localStorage.getItem('token');
         const response = await axios.get("http://localhost:4000/api/user/preferences", {
-          params: { userId },
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
           validateStatus: (s) => (s >= 200 && s < 300) || s === 404,
         });
         if (response.status === 404) {
@@ -318,7 +332,7 @@ const FoodList = () => {
       }
     };
     fetchUserPreferences();
-  }, [userId, showRecommended]);
+  }, [showRecommended]);
 
   const fetchFoods = async () => {
     try {
@@ -440,6 +454,7 @@ const FoodList = () => {
   }
 
   return (
+    <>
     <FoodListContainer>
       <Header>
         <Title>🍽️ 음식 메뉴</Title>
@@ -534,13 +549,16 @@ const FoodList = () => {
                           추천 점수: {food.recommendationScore.toFixed(1)}
                         </div>
                       )}
-                      <RecipeButton 
-                        onClick={() => fetchRecipe(food._id)}
-                        disabled={loadingRecipes.has(food._id)}
-                      >
-                        <ChefHat size={16} />
-                        {loadingRecipes.has(food._id) ? '로딩중...' : '레시피 보기'}
-                      </RecipeButton>
+                      {/* 레시피 버튼 - Spoonacular 레시피인 경우에만 표시 */}
+                      {food.recipe && food.recipe.provider !== 'fallback' && (
+                        <RecipeButton 
+                          onClick={() => fetchRecipe(food._id)}
+                          disabled={loadingRecipes.has(food._id)}
+                        >
+                          <ChefHat size={16} />
+                          {loadingRecipes.has(food._id) ? '로딩중...' : '레시피 보기'}
+                        </RecipeButton>
+                      )}
                     </FoodCard>
                   ))}
                 </FoodGrid>
@@ -578,17 +596,18 @@ const FoodList = () => {
           })()}
         </>
       )}
-      
-      {/* 레시피 모달 */}
-      <RecipeModal
-        recipe={selectedRecipe}
-        isOpen={isRecipeModalOpen}
-        onClose={() => {
-          setIsRecipeModalOpen(false);
-          setSelectedRecipe(null);
-        }}
-      />
     </FoodListContainer>
+    
+    {/* 레시피 모달 - FoodListContainer 밖에 위치 */}
+    <RecipeModal
+      recipe={selectedRecipe}
+      isOpen={isRecipeModalOpen}
+      onClose={() => {
+        setIsRecipeModalOpen(false);
+        setSelectedRecipe(null);
+      }}
+    />
+  </>
   );
 };
 

@@ -82,25 +82,45 @@ export default function Preferences() {
   const [allTags, setAllTags] = useState([]);
   const [tagSearch, setTagSearch] = useState("");
   const [nameToCategory, setNameToCategory] = useState({});
-  const [tab, setTab] = useState('tags'); // 'tags' | 'categories' | 'ratings'
+  const [tab, setTab] = useState('ratings'); // 'tags' | 'categories' | 'ratings'
   const [unratedRatings, setUnratedRatings] = useState({});
   const [unratedSearch, setUnratedSearch] = useState("");
   const [unratedSortKey, setUnratedSortKey] = useState("popular"); // popular | name | category
   const [unratedVisible, setUnratedVisible] = useState(12);
+  const [existingRatingsMap, setExistingRatingsMap] = useState({});
 
   const navigate = useNavigate();
 
-  const userId = "user123"; // userId 고정
+  // 토큰에서 사용자 ID를 가져오는 함수
+  const getUserId = () => {
+    const token = localStorage.getItem('token');
+    if (!token) return null;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.userId;
+    } catch (error) {
+      console.error('토큰 파싱 오류:', error);
+      return null;
+    }
+  };
 
   // 기존에 저장된 취향 불러오기
   const fetchPreferences = async () => {
     try {
+      const token = localStorage.getItem('token');
       const res = await axios.get("http://localhost:4000/api/user/preferences", {
-        params: { userId },
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
       console.log("[client] GET /api/user/preferences resp:", res.data);
-      setPreferences(res.data);
-      setLocalTags(Array.isArray(res.data.tags) ? res.data.tags : []);
+      setPreferences(res.data.data || res.data);
+      setLocalTags(Array.isArray((res.data.data || res.data).tags) ? (res.data.data || res.data).tags : []);
+      // existingRatingsMap은 기존 것을 유지하고, 새로운 평가만 추가
+      setExistingRatingsMap(prev => ({
+        ...prev,
+        ...((res.data.data || res.data).ratings || {})
+      }));
       setHasPreferences(true);
       // 네비게이션 동기화를 위한 플래그/이벤트
       window.localStorage.setItem('hasPreferences', 'true');
@@ -112,6 +132,10 @@ export default function Preferences() {
         navigate('/onboarding');
       } else {
         console.error("취향 불러오기 실패:", err);
+        // 오류가 발생해도 기본값으로 설정하여 페이지가 로드되도록 함
+        setPreferences({ ratings: {}, categories: [], customFoods: [], tags: [] });
+        setLocalTags([]);
+        setHasPreferences(true);
       }
     }
   };
@@ -168,14 +192,20 @@ const handleSave = async (foodId) => {
   try {
     const rating = preferences.ratings[foodId].rating;
     const requestData = {
-      userId,
       foodId,
       rating,
     };
     console.log("[client] PUT /api/user/preferences req:", requestData);
     const res = await axios.put("http://localhost:4000/api/user/preferences", requestData);
-    console.log("[client] PUT /api/user/preferences resp:", res.data);
-    fetchPreferences();
+      console.log("[client] PUT /api/user/preferences resp:", res.data);
+      // preferences 상태 즉시 업데이트
+      setPreferences(prev => ({
+        ...prev,
+        ratings: {
+          ...prev.ratings,
+          [foodId]: { ...prev.ratings[foodId], rating }
+        }
+      }));
   } catch (err) {
     console.error("취향 저장 실패:", err);
   }
@@ -184,10 +214,27 @@ const handleSave = async (foodId) => {
   // 취향 삭제 (DELETE)
   const handleDelete = async (foodId) => {
     try {
+      const token = localStorage.getItem('token');
       await axios.delete("http://localhost:4000/api/user/preferences", {
-        data: { userId, foodId },
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        data: { foodId },
       });
-      fetchPreferences();
+      
+      // existingRatingsMap에서도 제거
+      setExistingRatingsMap(prev => {
+        const next = { ...prev };
+        delete next[foodId];
+        return next;
+      });
+      
+      // preferences 상태도 즉시 업데이트
+      setPreferences(prev => {
+        const next = { ...prev };
+        delete next.ratings[foodId];
+        return next;
+      });
     } catch (err) {
       console.error("취향 삭제 실패:", err);
     }
@@ -208,19 +255,22 @@ const handleSave = async (foodId) => {
 
   const handleSaveTags = async () => {
     try {
+      const token = localStorage.getItem('token');
       const reqBody = {
-        userId,
         categories: preferences.categories,
         ratings: preferences.ratings,
         customFoods: preferences.customFoods,
         tags: localTags,
       };
       console.log("[client] POST /api/user/preferences req:", reqBody);
-      const res = await axios.post("http://localhost:4000/api/user/preferences", reqBody);
+      const res = await axios.post("http://localhost:4000/api/user/preferences", reqBody, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
       console.log("[client] POST /api/user/preferences resp:", res.data);
       // 응답에 tags가 누락되는 상황에서도 UI는 즉시 반영
       setPreferences(prev => ({ ...prev, tags: [...localTags] }));
-      await fetchPreferences();
       window.localStorage.setItem('hasPreferences', 'true');
       window.dispatchEvent(new Event('preferences-updated'));
     } catch (err) {
@@ -252,17 +302,28 @@ const handleSave = async (foodId) => {
       const updatedRatings = { ...preferences.ratings, [foodName + "_custom"]: newRatingObj };
       const updatedCustomFoods = [...preferences.customFoods, foodName];
 
+      const token = localStorage.getItem('token');
       await axios.post("http://localhost:4000/api/user/preferences", {
-        userId,
         categories: updatedCategories,
         ratings: updatedRatings,
         customFoods: updatedCustomFoods,
         tags: newTags,
+      }, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
       
       setNewFood("");
       setNewRating(3);
-      await fetchPreferences();
+      // preferences 상태 즉시 업데이트
+      setPreferences(prev => ({
+        ...prev,
+        categories: updatedCategories,
+        ratings: updatedRatings,
+        customFoods: updatedCustomFoods,
+        tags: newTags
+      }));
       window.localStorage.setItem('hasPreferences', 'true');
       window.dispatchEvent(new Event('preferences-updated'));
     } catch (err) {
@@ -295,17 +356,25 @@ const handleSave = async (foodId) => {
 
   const savePreferredCategories = async () => {
     try {
+      const token = localStorage.getItem('token');
       const reqBody = {
-        userId,
         categories: preferences.categories,
         ratings: preferences.ratings,
         customFoods: preferences.customFoods,
         tags: localTags,
       };
       console.log('[client] POST /api/user/preferences (categories) req:', reqBody);
-      const res = await axios.post('http://localhost:4000/api/user/preferences', reqBody);
+      const res = await axios.post('http://localhost:4000/api/user/preferences', reqBody, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
       console.log('[client] POST /api/user/preferences (categories) resp:', res.data);
-      await fetchPreferences();
+      // preferences 상태 즉시 업데이트
+      setPreferences(prev => ({
+        ...prev,
+        categories: preferences.categories
+      }));
     } catch (e) {
       console.error('카테고리 선호 저장 실패:', e);
     }
@@ -319,19 +388,43 @@ const handleSave = async (foodId) => {
   const handleSaveUnrated = async (food) => {
     try {
       const rating = unratedRatings[food._id] ?? 3;
+      const token = localStorage.getItem('token');
+      
+      // 새로운 음식 평가는 POST 요청으로 전체 취향 데이터를 업데이트
+      const newRatingObj = { name: food.name, rating };
+      const updatedRatings = { ...preferences.ratings, [food._id]: newRatingObj };
+      
       const requestData = {
-        userId,
-        foodId: food._id,
-        rating,
+        categories: preferences.categories,
+        ratings: updatedRatings,
+        customFoods: preferences.customFoods,
+        tags: localTags,
       };
-      console.log("[client] PUT /api/user/preferences (unrated) req:", requestData);
-      await axios.put("http://localhost:4000/api/user/preferences", requestData);
+      
+      console.log("[client] POST /api/user/preferences (unrated) req:", requestData);
+      await axios.post("http://localhost:4000/api/user/preferences", requestData, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
       setUnratedRatings(prev => {
         const next = { ...prev };
         delete next[food._id];
         return next;
       });
-      await fetchPreferences();
+      
+      // existingRatingsMap에 새로 평가한 음식 추가
+      setExistingRatingsMap(prev => ({
+        ...prev,
+        [food._id]: { name: food.name, rating }
+      }));
+      
+      // preferences 상태도 즉시 업데이트 (fetchPreferences 호출하지 않음)
+      setPreferences(prev => ({
+        ...prev,
+        ratings: updatedRatings
+      }));
     } catch (e) {
       console.error("미평가 음식 저장 실패:", e);
     }
@@ -457,8 +550,38 @@ const handleSave = async (foodId) => {
       {tab === 'ratings' && (
       <>
       <Section>
-        <h3>온보딩에서 평가하지 않은 음식 추가</h3>
-        <div style={{ color:'#64748b', marginBottom:8 }}>목록에서 별점을 선택하고 추가를 눌러 저장하세요.</div>
+        <h3 style={{ color: '#1f2937', fontSize: '1.25rem', fontWeight: 'bold', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          ⭐ 평가한 음식
+        </h3>
+        {filteredEntries.length > 0 ? (
+          filteredEntries.map(([foodId, obj]) => (
+            <Row key={foodId}>
+              <div>
+                <div style={{ fontWeight: 600 }}>{obj.name}</div>
+              </div>
+              <Controls>
+                <StarRating
+                  value={obj.rating}
+                  onChange={(v) => handleRatingChange(foodId, v)}
+                  size={20}
+                />
+                <Button onClick={() => handleSave(foodId)}>저장</Button>
+                <Button onClick={() => handleDelete(foodId)} style={{ background:'#ef4444', borderColor:'#ef4444' }}>삭제</Button>
+              </Controls>
+            </Row>
+          ))
+        ) : (
+          <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
+            아직 평가한 음식이 없습니다. 아래에서 음식을 평가해보세요.
+          </div>
+        )}
+      </Section>
+      
+      <Section>
+        <h3 style={{ color: '#6b7280', fontSize: '1.1rem', fontWeight: '500', marginBottom: '1rem' }}>
+          새로운 음식 평가하기
+        </h3>
+        <div style={{ color:'#64748b', marginBottom:8, fontSize: '0.9rem' }}>목록에서 별점을 선택하고 추가를 눌러 저장하세요.</div>
         {/* 컨트롤 바 */}
         <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8, flexWrap:'wrap' }}>
           <Input
@@ -474,7 +597,7 @@ const handleSave = async (foodId) => {
           </Select>
         </div>
         {(allFoods
-          .filter(f => !Object.keys(preferences.ratings || {}).includes(f._id))
+          .filter(f => !Object.keys(existingRatingsMap).includes(f._id))
           .filter(f => !unratedSearch || (f.name||'').toLowerCase().includes(unratedSearch.trim().toLowerCase()))
           .sort((a,b) => {
             if (unratedSortKey === 'name') return (a.name||'').localeCompare(b.name||'');
@@ -502,25 +625,6 @@ const handleSave = async (foodId) => {
         <div style={{ display:'flex', justifyContent:'center', marginTop:8 }}>
           <Button onClick={() => setUnratedVisible(v => v + 12)}>더 보기</Button>
         </div>
-      </Section>
-      <Section>
-        <h3>기존 취향</h3>
-        {filteredEntries.map(([foodId, obj]) => (
-          <Row key={foodId}>
-            <div>
-              <div style={{ fontWeight: 600 }}>{obj.name}</div>
-            </div>
-            <Controls>
-              <StarRating
-                value={obj.rating}
-                onChange={(v) => handleRatingChange(foodId, v)}
-                size={20}
-              />
-              <Button onClick={() => handleSave(foodId)}>저장</Button>
-              <Button onClick={() => handleDelete(foodId)} style={{ background:'#ef4444', borderColor:'#ef4444' }}>삭제</Button>
-            </Controls>
-          </Row>
-        ))}
       </Section>
 
       <Section>

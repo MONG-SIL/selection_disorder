@@ -140,11 +140,15 @@ export default function WeatherWidget({ lat, lon }) {
     setShowRecommendations(true);
     
     try {
+      const token = localStorage.getItem('token');
       const response = await axios.get(`http://localhost:4000/api/weather-recommend`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         params: {
           temperature: weather.temp,
           description: weather.description,
-          userId: "user123", // 실제로는 사용자 ID를 동적으로 가져와야 함
+          // userId는 백엔드에서 토큰으로 자동 추출됨
           foodType: foodType
         }
       });

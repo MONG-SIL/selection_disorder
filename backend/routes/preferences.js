@@ -1,15 +1,14 @@
 import express from "express";
+import { authenticateToken } from "../middleware/auth.js";
 const router = express.Router();
 
 let preferencesDB = {}; // userId별로 저장
 
-// GET /api/user/preferences?userId=xxx
-router.get("/", (req, res) => {
-  console.log("[preferences][GET] query:", req.query);
-  const { userId } = req.query;
-  if (!userId) {
-    return res.status(400).json({ success: false, message: "userId is required" });
-  }
+// GET /api/user/preferences
+router.get("/", authenticateToken, (req, res) => {
+  console.log("[preferences][GET] userId from token:", req.user.userId);
+  const userId = req.user.userId;
+  
   if (!preferencesDB[userId]) {
     return res.status(200).json({ 
       success: true, 
@@ -24,12 +23,10 @@ router.get("/", (req, res) => {
 });
 
 // POST /api/user/preferences (전체 취향 저장/덮어쓰기)
-router.post("/", (req, res) => {
+router.post("/", authenticateToken, (req, res) => {
   console.log("[preferences][POST] body:", req.body);
-  const { userId } = req.body;
-  if (!userId) {
-    return res.status(400).json({ success: false, message: "userId is required" });
-  }
+  const userId = req.user.userId;
+  
   const current = preferencesDB[userId] || {};
   const categories = req.body.categories !== undefined ? req.body.categories : current.categories || [];
   const ratings = req.body.ratings !== undefined ? req.body.ratings : current.ratings || {};
@@ -38,15 +35,17 @@ router.post("/", (req, res) => {
 
   preferencesDB[userId] = { categories, ratings, customFoods, tags };
   console.log("[preferences][POST] saved for", userId, preferencesDB[userId]);
-  res.json({ success: true, preferences: preferencesDB[userId] });
+  res.json({ success: true, data: preferencesDB[userId] });
 });
 
 // PUT /api/user/preferences (음식 평점만 수정)
-router.put("/", (req, res) => {
+router.put("/", authenticateToken, (req, res) => {
   console.log("[preferences][PUT] body:", req.body);
-  const { userId, foodId, rating } = req.body;
-  if (!userId || !foodId || rating === undefined || rating === null) {
-    return res.status(400).json({ success: false, message: "userId, foodId, rating required" });
+  const userId = req.user.userId;
+  const { foodId, rating } = req.body;
+  
+  if (!foodId || rating === undefined || rating === null) {
+    return res.status(400).json({ success: false, message: "foodId, rating required" });
   }
   if (!preferencesDB[userId]) {
     return res.status(404).json({ success: false, message: "User preferences not found" });
@@ -57,24 +56,26 @@ router.put("/", (req, res) => {
     typeof preferencesDB[userId].ratings[foodId] === "object"
   ) {
     preferencesDB[userId].ratings[foodId].rating = rating;
-    res.json({ success: true, preferences: preferencesDB[userId] });
+    res.json({ success: true, data: preferencesDB[userId] });
   } else {
     return res.status(404).json({ success: false, message: "Food not found in preferences" });
   }
 });
 
 // DELETE /api/user/preferences (음식 취향 삭제)
-router.delete("/", (req, res) => {
-  const { userId, foodId } = req.body;
-  if (!userId || !foodId) {
-    return res.status(400).json({ success: false, message: "userId, foodId required" });
+router.delete("/", authenticateToken, (req, res) => {
+  const userId = req.user.userId;
+  const { foodId } = req.body;
+  
+  if (!foodId) {
+    return res.status(400).json({ success: false, message: "foodId required" });
   }
   if (!preferencesDB[userId]) {
     return res.status(404).json({ success: false, message: "User preferences not found" });
   }
   if (preferencesDB[userId].ratings[foodId]) {
     delete preferencesDB[userId].ratings[foodId];
-    res.json({ success: true, preferences: preferencesDB[userId] });
+    res.json({ success: true, data: preferencesDB[userId] });
   } else {
     return res.status(404).json({ success: false, message: "Food not found in preferences" });
   }
@@ -123,6 +124,21 @@ router.get("/average-ratings", (req, res) => {
     }
   });
   res.json({ success: true, averages: result });
+});
+
+// POST /api/user/preferences/onboarding (온보딩 취향 저장)
+router.post("/onboarding", authenticateToken, (req, res) => {
+  console.log("[preferences][onboarding] body:", req.body);
+  const userId = req.user.userId;
+  const preferences = req.body.preferences;
+  
+  if (!preferences) {
+    return res.status(400).json({ success: false, message: "preferences required" });
+  }
+
+  preferencesDB[userId] = preferences;
+  console.log("[preferences][onboarding] saved for", userId, preferencesDB[userId]);
+  res.json({ success: true, data: preferencesDB[userId] });
 });
 
 export default router;

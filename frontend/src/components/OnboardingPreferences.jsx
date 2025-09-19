@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import axios from "axios";
-import { getAllFoods } from "../services/foodApi"; 
+import { getAllFoods, getFoodImages, getFoodRecipes } from "../services/foodApi";
+import { enrichFoodsWithImagesAndRecipes, getValidFoodIds } from "../utils/foodUtils"; 
 import StarRating from "./StarRating";
 
 const Container = styled.div`
@@ -65,14 +66,8 @@ const Button = styled.button`
 `;
 
 export default function OnboardingPreferences({ onComplete }) {
-  // step: 현재 진행 중인 온보딩 단계 (1, 2, 3)
-  const [step, setStep] = useState(1);
-  // categories: 사용자가 선택한 음식 카테고리 목록
-  const [categories, setCategories] = useState([]);
   // ratings: 음식별로 사용자가 평가한 선호도 { foodId: rating }
   const [ratings, setRatings] = useState({});
-  // customFoods: 사용자가 직접 입력한 좋아하는 음식 문자열 (쉼표 구분)
-  const [customFoods, setCustomFoods] = useState("");
   // availableFoods: 백엔드에서 가져온 실제 음식 데이터
   const [availableFoods, setAvailableFoods] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -83,6 +78,7 @@ export default function OnboardingPreferences({ onComplete }) {
   const [selectedTags, setSelectedTags] = useState([]);
   const [existingRatingsMap, setExistingRatingsMap] = useState({});
   const [hasPreferences, setHasPreferences] = useState(false);
+  const [isNewUser, setIsNewUser] = useState(true); // 신규 사용자 여부
   // 검색/정렬/페이지네이션
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState("popular"); // popular | name | category
@@ -90,34 +86,37 @@ export default function OnboardingPreferences({ onComplete }) {
   const pageSize = 10;
   const [imageCache, setImageCache] = useState({});
 
-  // Step1: 선택 가능한 음식 카테고리 목록
-  const foodCategories = ["한식", "중식", "일식", "양식", "디저트", "기타"];
-
   // 컴포넌트 마운트 시 음식 데이터 + 기존 취향 확인
   useEffect(() => {
     const fetchFoods = async () => {
       try {
         const response = await getAllFoods({ available: true });
         const foods = response.data || [];
-        setAvailableFoods(foods);
-        // 백엔드 캐시에서 배치 조회 (새로운 food-recipes API 사용)
-        const ids = foods.map(f => f._id).filter(Boolean);
-        if (ids.length) {
-          try {
-            const r = await axios.get('http://localhost:4000/api/food-recipes', { params: { ids: ids.join(',') } });
-            const recipes = r.data?.recipes || {};
-            // 이미지 URL만 추출하여 캐시에 저장
-            const imageCache = {};
-            Object.keys(recipes).forEach(id => {
-              if (recipes[id].imageUrl) {
-                imageCache[id] = recipes[id].imageUrl;
-              }
-            });
-            setImageCache(imageCache);
-          } catch (e) {
-            console.error('이미지 캐시 조회 실패:', e);
-          }
-        }
+         // 이미지와 레시피를 병렬로 조회
+         const ids = getValidFoodIds(foods);
+         if (ids.length) {
+           try {
+             const [imagesRes, recipesRes] = await Promise.all([
+               getFoodImages(ids),
+               getFoodRecipes(ids)
+             ]);
+             
+             const images = imagesRes?.images || {};
+             const recipes = recipesRes?.recipes || {};
+             
+             // 이미지 캐시 설정
+             setImageCache(images);
+             
+             // 유틸리티 함수를 사용하여 음식 데이터 강화
+             const enrichedFoods = enrichFoodsWithImagesAndRecipes(foods, images, recipes);
+             setAvailableFoods(enrichedFoods);
+           } catch (e) {
+             console.error('이미지/레시피 조회 실패:', e);
+             setAvailableFoods(foods);
+           }
+         } else {
+           setAvailableFoods(foods);
+         }
         setLoading(false);
       } catch (error) {
         console.error("음식 데이터 가져오기 실패:", error);
@@ -133,21 +132,29 @@ export default function OnboardingPreferences({ onComplete }) {
           },
           validateStatus: (s) => (s >= 200 && s < 300) || s === 404,
         });
+        
         if (res.status === 404) {
           setHasPreferences(false);
+          setIsNewUser(true);
           return;
         }
-        if (res?.data?.ratings) {
-          setExistingRatingsMap(res.data.ratings || {});
+        
+        // 응답 구조 확인 (Preferences와 동일한 방식)
+        const responseData = res.data?.data || res.data;
+        
+        if (responseData && responseData.ratings && Object.keys(responseData.ratings).length > 0) {
+          setExistingRatingsMap(responseData.ratings || {});
           setHasPreferences(true);
-          // 두 번째 접속부터는 2단계로 진입
-          setStep(2);
-          // 네비게이션 동기화
-          window.localStorage.setItem('hasPreferences', 'true');
-          window.dispatchEvent(new Event('preferences-updated'));
+          setIsNewUser(false);
+          // 기존 취향이 있으면 미평가 음식만 표시
+        } else {
+          setHasPreferences(false);
+          setIsNewUser(true);
         }
       } catch (e) {
-        console.error('기존 취향 확인 실패:', e);
+        console.error('취향 확인 실패:', e);
+        setHasPreferences(false);
+        setIsNewUser(true);
       }
     };
 
@@ -208,11 +215,14 @@ export default function OnboardingPreferences({ onComplete }) {
     }
   };
 
-  // 2단계 완료 시: 별점 저장 후 3단계로 이동
-  const saveStep2AndFinish = async () => {
+  // 완료 시: 별점 저장 후 홈으로 이동
+  const handleFinish = async () => {
     try {
       const entries = Object.entries(ratings || {}).filter(([_, v]) => Number(v?.rating) > 0);
-      console.log('2단계 저장 시작 - 평가된 음식 수:', entries.length);
+      if (entries.length === 0) {
+        alert('최소 하나의 음식을 평가해주세요.');
+        return;
+      }
       
       const token = localStorage.getItem('token');
       if (!token) {
@@ -220,51 +230,68 @@ export default function OnboardingPreferences({ onComplete }) {
         return;
       }
       
-      // 현재 저장된 전체 취향 불러오기 (없으면 기본값)
-      let current = { categories: [], ratings: {}, customFoods: [], tags: [] };
-      try {
-        console.log('기존 취향 조회 중...');
-        const res = await axios.get('http://localhost:4000/api/user/preferences', { 
-          headers: {
-            'Authorization': `Bearer ${token}`
+      // 4점 이상 평가한 음식들의 태그를 수집 (4점 이하는 제외)
+      const highRatedFoodTags = new Set();
+      entries.forEach(([foodId, ratingData]) => {
+        if (Number(ratingData.rating) >= 4) {
+          const food = availableFoods.find(f => f._id === foodId);
+          if (food && Array.isArray(food.tags)) {
+            food.tags.forEach(tag => highRatedFoodTags.add(tag));
           }
+        }
+      });
+      
+      console.log("🔍 [DEBUG] handleFinish - 4점 이상 음식 태그:", Array.from(highRatedFoodTags));
+      
+      if (isNewUser) {
+        // 신규 사용자: 전체 취향 데이터 생성 (4점 이상 음식 태그 포함)
+        const body = {
+          categories: [],
+          ratings: Object.fromEntries(entries.map(([foodId, r]) => [foodId, r])),
+          customFoods: [],
+          tags: Array.from(highRatedFoodTags),
+        };
+        
+        console.log('신규 사용자 취향 저장:', body);
+        await axios.post('http://localhost:4000/api/user/preferences', body, {
+          headers: { 'Authorization': `Bearer ${token}` }
         });
-        current = res.data.data || res.data || current;
-        console.log('기존 취향 조회 성공:', current);
-      } catch (e) {
-        // 404면 신규 생성 케이스로 간주
-        if (e.response?.status !== 404) {
+      } else {
+        // 기존 사용자: 기존 취향에 새 음식과 태그 추가
+        let current = { categories: [], ratings: {}, customFoods: [], tags: [] };
+        try {
+          const res = await axios.get('http://localhost:4000/api/user/preferences', { 
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          current = res.data.data || res.data || current;
+        } catch (e) {
           console.error('기존 취향 조회 실패:', e);
-        } else {
-          console.log('기존 취향 없음 - 신규 생성');
+          return;
         }
+
+        const mergedRatings = { ...current.ratings };
+        entries.forEach(([foodId, r]) => {
+          mergedRatings[foodId] = { name: r.name, rating: r.rating };
+        });
+
+        // 기존 태그와 새로 추가된 태그 합치기
+        const existingTags = current.tags || [];
+        const allTags = [...new Set([...existingTags, ...highRatedFoodTags])];
+
+        const body = {
+          categories: current.categories,
+          ratings: mergedRatings,
+          customFoods: current.customFoods,
+          tags: allTags,
+        };
+        
+        console.log('기존 사용자 취향 업데이트:', body);
+        await axios.post('http://localhost:4000/api/user/preferences', body, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
       }
-
-      // 새 평점을 병합(없던 음식은 추가, 있던 음식은 덮어쓰기)
-      const mergedRatings = { ...(current.ratings || {}) };
-      entries.forEach(([foodId, r]) => {
-        mergedRatings[foodId] = { name: r.name, rating: r.rating };
-      });
-
-      const body = {
-        categories: current.categories || [],
-        ratings: mergedRatings,
-        customFoods: current.customFoods || [],
-        tags: current.tags || [],
-      };
       
-      console.log('2단계 저장 요청 데이터:', body);
-      console.log('API 요청 전송 중...');
-      
-      const response = await axios.post('http://localhost:4000/api/user/preferences', body, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      console.log('2단계 저장 성공:', response.data);
-      
-      // 새로 평가한 음식들을 existingRatingsMap에 추가하여 다시 나타나지 않도록 함
+      // 새로 평가한 음식들을 existingRatingsMap에 추가
       const newExistingRatings = { ...existingRatingsMap };
       entries.forEach(([foodId, r]) => {
         newExistingRatings[foodId] = r;
@@ -275,74 +302,14 @@ export default function OnboardingPreferences({ onComplete }) {
       window.localStorage.setItem('hasPreferences', 'true');
       window.dispatchEvent(new Event('preferences-updated'));
       
-      // 기존 취향이 있으면 홈으로, 없으면 3단계로 이동
-      if (hasPreferences) {
-        navigate('/');
-      } else {
-        setStep(3);
-      }
-    } catch (e) {
-      console.error('2단계 저장 실패:', e);
-      // 오류가 발생해도 기존 취향이 있으면 홈으로, 없으면 3단계로 이동
-      if (hasPreferences) {
-        navigate('/');
-      } else {
-        setStep(3);
-      }
-    }
-  };
-
-  // 완료 버튼 클릭 시 호출되는 함수
-  const handleFinish = async () => {
-    const token = localStorage.getItem('token');
-    
-    // customFoods를 쉼표로 분리
-    const customFoodsArr = customFoods
-      .split(",")
-      .map(f => f.trim())
-      .filter(f => f);
-
-    // ratings에 customFoods도 추가 (중복 방지)
-    const updatedRatings = { ...ratings };
-    customFoodsArr.forEach(foodName => {
-      // ratings에 이미 같은 name이 있는지 확인
-      const exists = Object.values(updatedRatings).some(r => r.name === foodName);
-      if (!exists) {
-        // 고유 key 생성 (음식명 + "custom" 등)
-        const key = `${foodName}_custom`;
-        updatedRatings[key] = { name: foodName, rating: 5 };
-      }
-    });
-
-    const finalCategories = Array.from(new Set([...(categories || []), ...suggestedCategories]));
-    const finalTags = Array.from(new Set([...(selectedTags || []), ...suggestedTags]));
-
-    const data = {
-      categories: finalCategories,
-      ratings: updatedRatings,
-      customFoods: customFoodsArr,
-      tags: finalTags,
-    };
-    
-    console.log("최종 취향 데이터:", data);
-    
-    try {
-      const res = await axios.post("http://localhost:4000/api/user/preferences", data, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      console.log("서버 저장 결과:", res.data);
-      
-      // 취향 데이터를 Food 데이터에 반영하는 API 호출
-      await updateFoodRatings(updatedRatings);
-      
-      // 온보딩 완료 후 홈으로 이동
+      // 홈으로 이동
       navigate('/');
-    } catch (err) {
-      console.error("온보딩 취향 저장 실패:", err);
+    } catch (e) {
+      console.error('취향 저장 실패:', e);
+      alert('저장에 실패했습니다. 다시 시도해주세요.');
     }
   };
+
 
   // 사용자 취향을 Food 데이터에 반영하는 함수
   const updateFoodRatings = async (userRatings) => {
@@ -367,35 +334,17 @@ export default function OnboardingPreferences({ onComplete }) {
     }
   };
 
+
   return (
     <Container>
-      {step === 1 && (
-        <div>
-          <StepTitle>1단계: 선호하는 카테고리를 선택하세요</StepTitle>
-          {foodCategories.map(cat => (
-            <CategoryLabel key={cat}>
-              <input
-                type="checkbox"
-                value={cat}
-                checked={categories.includes(cat)}
-                onChange={e => {
-                  if (e.target.checked) {
-                    setCategories([...categories, cat]);
-                  } else {
-                    setCategories(categories.filter(c => c !== cat));
-                  }
-                }}
-              />
-              {cat}
-            </CategoryLabel>
-          ))}
-          <Button onClick={() => setStep(2)}>다음</Button>
-        </div>
-      )}
-
-      {step === 2 && (
-        <div>
-          <StepTitle>2단계: 음식을 보고 선호도를 선택하세요</StepTitle>
+      <div>
+        <StepTitle>{isNewUser ? '음식 취향 설정' : '새로운 음식 평가하기'}</StepTitle>
+        <p style={{ marginBottom: '1rem', color: '#6b7280' }}>
+          {isNewUser 
+            ? '아래 음식들 중에서 선호하는 음식을 평가해주세요. 최소 3개 이상의 음식을 평가해주세요.'
+            : '아래 음식들 중에서 선호하는 음식을 평가해주세요. 평가한 음식은 기존 취향에 추가됩니다.'
+          }
+        </p>
           {loading ? (
             <div>음식 데이터를 불러오는 중...</div>
           ) : (
@@ -421,9 +370,14 @@ export default function OnboardingPreferences({ onComplete }) {
               </div>
               {(() => {
                 const filtered = availableFoods
-                  .filter(food => !Object.keys(existingRatingsMap).includes(food._id))
+                  .filter(food => {
+                    // 기존 취향에 없는 음식만 표시
+                    const isRated = Object.keys(existingRatingsMap).includes(food._id);
+                    return !isRated;
+                  })
                   .filter(food => !search || food.name?.toLowerCase().includes(search.trim().toLowerCase()))
-                  .sort((a,b) => {
+                
+                const sorted = filtered.sort((a,b) => {
                     if (sortKey === 'name') return (a.name||'').localeCompare(b.name||'');
                     if (sortKey === 'category') return (a.category||'').localeCompare(b.category||'');
                     // popular: rating 내림차순, 없으면 0
@@ -431,10 +385,10 @@ export default function OnboardingPreferences({ onComplete }) {
                     const br = Number(b.rating||0);
                     return br - ar;
                   });
-                const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+                const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
                 const currentPage = Math.min(Math.max(1, page), totalPages);
                 const start = (currentPage - 1) * pageSize;
-                const items = filtered.slice(start, start + pageSize);
+                const items = sorted.slice(start, start + pageSize);
                 return items.map(food => (
                   <FoodItem key={food._id}>
                     <div style={{ width: '80px', height: '60px', backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', overflow:'hidden' }}>
@@ -455,7 +409,10 @@ export default function OnboardingPreferences({ onComplete }) {
               })()}
               {(() => {
                 const filteredCount = availableFoods
-                  .filter(food => !Object.keys(existingRatingsMap).includes(food._id))
+                  .filter(food => {
+                    const isRated = Object.keys(existingRatingsMap).includes(food._id);
+                    return !isRated;
+                  })
                   .filter(food => !search || food.name?.toLowerCase().includes(search.trim().toLowerCase()))
                   .length;
                 const totalPages = Math.max(1, Math.ceil(filteredCount / pageSize));
@@ -479,54 +436,13 @@ export default function OnboardingPreferences({ onComplete }) {
                   </div>
                 );
               })()}
-              <Button onClick={saveStep2AndFinish}>완료</Button>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                <Button onClick={handleFinish}>완료</Button>
+                <Button onClick={() => navigate('/')} style={{ background: '#6b7280', borderColor: '#6b7280' }}>취소</Button>
+              </div>
             </>
           )}
         </div>
-      )}
-
-      {step === 3 && !hasPreferences && (
-        <div>
-          <StepTitle>3단계: 좋아하는 음식을 직접 입력하세요 (쉼표 구분)</StepTitle>
-          <StepTitle>추천 카테고리/태그를 확인하고 필요하면 선택/해제하세요</StepTitle>
-          <div style={{ marginBottom:'0.75rem' }}>
-            <div style={{ fontWeight:600, marginBottom:'0.25rem' }}>추천 카테고리</div>
-            {(suggestedCategories.length ? suggestedCategories : ["한식","중식","일식","양식"]).map(cat => (
-              <button
-                key={cat}
-                onClick={() => setCategories(prev => prev.includes(cat) ? prev.filter(c=>c!==cat) : [...prev, cat])}
-                style={{
-                  marginRight:8, marginBottom:8, padding:'6px 10px', borderRadius:999,
-                  border: `1px solid ${categories.includes(cat)?'#2563eb':'#cbd5e1'}`,
-                  background: categories.includes(cat)?'#2563eb':'#fff', color: categories.includes(cat)?'#fff':'#0f172a'
-                }}
-              >{cat}</button>
-            ))}
-          </div>
-          <div style={{ marginBottom:'0.75rem' }}>
-            <div style={{ fontWeight:600, marginBottom:'0.25rem' }}>추천 태그</div>
-            {(suggestedTags.length ? suggestedTags : ["매운맛","면요리","고기","해산물"]).map(tag => (
-              <button
-                key={tag}
-                onClick={() => setSelectedTags(prev => prev.includes(tag) ? prev.filter(t=>t!==tag) : [...prev, tag])}
-                style={{
-                  marginRight:8, marginBottom:8, padding:'6px 10px', borderRadius:999,
-                  border: `1px solid ${selectedTags.includes(tag)?'#059669':'#cbd5e1'}`,
-                  background: selectedTags.includes(tag)?'#059669':'#fff', color: selectedTags.includes(tag)?'#fff':'#0f172a'
-                }}
-              >#{tag}</button>
-            ))}
-          </div>
-          <StepTitle>이곳에 입력하는 음식은 선호도 5로 저장되며, 선호도는 추후 선호도 창에서 언제든 수정할 수 있습니다.</StepTitle>
-          <TextInput
-            type="text"
-            placeholder="예: 떡볶이, 삼겹살, 치즈케이크"
-            value={customFoods}
-            onChange={e => setCustomFoods(e.target.value)}
-          />
-          <Button onClick={handleFinish}>완료</Button>
-        </div>
-      )}
     </Container>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import styled from 'styled-components';
-import { getAllFoods, getFoodsByCategory } from '../services/foodApi';
+import { getAllFoods, getFoodsByCategory, getFoodImages, getFoodRecipes, getFoodRecipe } from '../services/foodApi';
+import { enrichFoodsWithImagesAndRecipes, getValidFoodIds, hasFoodRecipe } from '../utils/foodUtils';
 import axios from 'axios';
 import RecipeModal from './RecipeModal';
 import { ChefHat } from 'lucide-react';
@@ -247,11 +248,22 @@ const FoodList = () => {
     }, 2000); // 300ms 디바운스
   }, [selectedCategory, searchTerm]);
 
-  // Spoonacular 레시피 및 이미지 검색
+  // 음식 이미지 배치 조회
+  const fetchFoodImagesBatch = async (foodIds) => {
+    try {
+      const res = await getFoodImages(foodIds);
+      return res?.images || {};
+    } catch (e) {
+      console.error('이미지 배치 조회 실패:', e);
+      return {};
+    }
+  };
+
+  // 음식 레시피 배치 조회
   const fetchFoodRecipesBatch = async (foodIds) => {
     try {
-      const res = await axios.get('http://localhost:4000/api/food-recipes', { params: { ids: foodIds.join(',') } });
-      return res.data?.recipes || {};
+      const res = await getFoodRecipes(foodIds);
+      return res?.recipes || {};
     } catch (e) {
       console.error('레시피 배치 조회 실패:', e);
       return {};
@@ -263,14 +275,14 @@ const FoodList = () => {
     console.log('레시피 조회 시작:', foodId);
     setLoadingRecipes(prev => new Set(prev).add(foodId));
     try {
-      const res = await axios.get(`http://localhost:4000/api/food-recipes/${foodId}`);
-      console.log('레시피 응답:', res.data);
-      if (res.data?.success) {
-        console.log('레시피 데이터:', res.data.recipe);
-        setSelectedRecipe(res.data.recipe);
+      const res = await getFoodRecipe(foodId);
+      console.log('레시피 응답:', res);
+      if (res?.success) {
+        console.log('레시피 데이터:', res.recipe);
+        setSelectedRecipe(res.recipe);
         setIsRecipeModalOpen(true);
       } else {
-        console.log('레시피 조회 실패:', res.data?.message);
+        console.log('레시피 조회 실패:', res?.message);
         alert('레시피를 찾을 수 없습니다.');
       }
     } catch (e) {
@@ -349,18 +361,29 @@ const FoodList = () => {
         response = await getFoodsByCategory(selectedCategory);
       }
       
-      const foods = response.data;
-      const ids = foods.map(f => f._id).filter(Boolean);
-      const averages = ids.length ? await fetchAverageRatings(ids) : {};
-      const recipes = ids.length ? await fetchFoodRecipesBatch(ids) : {};
-      const withRecipes = foods.map((food) => {
-        const avg = averages[food._id];
-        const rating = typeof avg === 'number' ? avg : 2.5;
-        const recipeData = recipes[food._id];
-        const image = food.image || recipeData?.imageUrl || null;
-        return { ...food, image, rating, recipe: recipeData?.recipe };
-      });
-      setFoods(withRecipes);
+       const foods = response.data;
+       const ids = getValidFoodIds(foods);
+       
+       // 병렬로 이미지, 레시피, 평균 평점 조회
+       const [averages, images, recipes] = await Promise.all([
+         ids.length ? fetchAverageRatings(ids) : Promise.resolve({}),
+         ids.length ? fetchFoodImagesBatch(ids) : Promise.resolve({}),
+         ids.length ? fetchFoodRecipesBatch(ids) : Promise.resolve({})
+       ]);
+       
+       // 유틸리티 함수를 사용하여 음식 데이터 강화
+       const enrichedFoods = enrichFoodsWithImagesAndRecipes(foods, images, recipes);
+       
+       // 평균 평점 추가
+       const withImagesAndRecipes = enrichedFoods.map((food) => {
+         const avg = averages[food._id];
+         const rating = typeof avg === 'number' ? avg : 2.5;
+         return { 
+           ...food, 
+           rating
+         };
+       });
+      setFoods(withImagesAndRecipes);
     } catch (err) {
       setError('음식 리스트를 가져오는데 실패했습니다.');
       console.error('Error fetching foods:', err);
@@ -549,8 +572,8 @@ const FoodList = () => {
                           추천 점수: {food.recommendationScore.toFixed(1)}
                         </div>
                       )}
-                      {/* 레시피 버튼 - Spoonacular 레시피인 경우에만 표시 */}
-                      {food.recipe && food.recipe.provider !== 'fallback' && (
+                       {/* 레시피 버튼 - 레시피가 있는 경우에만 표시 */}
+                       {hasFoodRecipe(food) && (
                         <RecipeButton 
                           onClick={() => fetchRecipe(food._id)}
                           disabled={loadingRecipes.has(food._id)}

@@ -30,6 +30,43 @@ export const getFoodById = async (id) => {
   }
 };
 
+// 음식 이미지 배치 조회
+export const getFoodImages = async (foodIds) => {
+  try {
+    const response = await axios.get('http://localhost:4000/api/food-images', {
+      params: { ids: foodIds.join(',') }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('음식 이미지 조회 실패:', error);
+    throw error;
+  }
+};
+
+// 음식 레시피 배치 조회
+export const getFoodRecipes = async (foodIds) => {
+  try {
+    const response = await axios.get('http://localhost:4000/api/food-recipes', {
+      params: { ids: foodIds.join(',') }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('음식 레시피 조회 실패:', error);
+    throw error;
+  }
+};
+
+// 개별 음식 레시피 조회
+export const getFoodRecipe = async (foodId) => {
+  try {
+    const response = await axios.get(`http://localhost:4000/api/food-recipes/${foodId}`);
+    return response.data;
+  } catch (error) {
+    console.error('음식 레시피 조회 실패:', error);
+    throw error;
+  }
+};
+
 // 카테고리별 음식 리스트
 export const getFoodsByCategory = async (category) => {
   try {

@@ -10,12 +10,13 @@ router.get("/", authenticateToken, (req, res) => {
   const userId = req.user.userId;
   
   if (!preferencesDB[userId]) {
-    return res.status(200).json({ 
-      success: true, 
+    return res.status(404).json({ 
+      success: false, 
       message: "No preferences found",
       data: null 
     });
   }
+  
   res.json({ 
     success: true, 
     data: preferencesDB[userId] 
@@ -41,23 +42,36 @@ router.post("/", authenticateToken, (req, res) => {
 // PUT /api/user/preferences (음식 평점만 수정)
 router.put("/", authenticateToken, (req, res) => {
   console.log("[preferences][PUT] body:", req.body);
+  console.log("[preferences][PUT] headers:", req.headers);
+  console.log("[preferences][PUT] user:", req.user);
+  
   const userId = req.user.userId;
   const { foodId, rating } = req.body;
+  
+  console.log("[preferences][PUT] userId:", userId);
+  console.log("[preferences][PUT] foodId:", foodId);
+  console.log("[preferences][PUT] rating:", rating);
   
   if (!foodId || rating === undefined || rating === null) {
     return res.status(400).json({ success: false, message: "foodId, rating required" });
   }
   if (!preferencesDB[userId]) {
+    console.log("[preferences][PUT] User preferences not found for userId:", userId);
     return res.status(404).json({ success: false, message: "User preferences not found" });
   }
+
+  console.log("[preferences][PUT] preferencesDB[userId]:", preferencesDB[userId]);
+  console.log("[preferences][PUT] preferencesDB[userId].ratings[foodId]:", preferencesDB[userId].ratings[foodId]);
 
   if (
     preferencesDB[userId].ratings[foodId] &&
     typeof preferencesDB[userId].ratings[foodId] === "object"
   ) {
     preferencesDB[userId].ratings[foodId].rating = rating;
+    console.log("[preferences][PUT] Updated rating successfully");
     res.json({ success: true, data: preferencesDB[userId] });
   } else {
+    console.log("[preferences][PUT] Food not found in preferences");
     return res.status(404).json({ success: false, message: "Food not found in preferences" });
   }
 });

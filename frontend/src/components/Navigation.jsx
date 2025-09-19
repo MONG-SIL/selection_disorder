@@ -104,16 +104,20 @@ export default function Navigation() {
   const handleLogout = () => {
     logout();
   };
+  //<NavLink to="/map">Map</NavLink>
+  //<NavLink to="/chat">Chat</NavLink>
 
   return (
     <NavBar>
       <NavLink to="/">Home</NavLink>
       <NavLink to="/weather">Weather</NavLink>
-      <NavLink to="/map">Map</NavLink>
       <NavLink to="/food">Food Menu</NavLink>
-      <NavLink to="/onboarding">Preferences</NavLink>
-      {hasPreferences && <NavLink to="/preferences">My</NavLink>}
-      <NavLink to="/chat">Chat</NavLink>
+      {hasPreferences ? (
+        <NavLink to="/preferences">My</NavLink>
+      ) : (
+        <NavLink to="/onboarding">Preferences</NavLink>
+      )}
+      <NavLink to="/onboarding">Add Preferences</NavLink>
       <LogoutButton onClick={handleLogout}>로그아웃</LogoutButton>
     </NavBar>
   );

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import axios from "axios";
 import StarRating from "./StarRating";
-import { getAllFoods } from "../services/foodApi";
+import { getAllFoods, getFoodImages, getFoodRecipes } from "../services/foodApi";
 import { generateFoodTags } from "../services/gptApi";
 
 const Container = styled.div`
@@ -114,12 +114,22 @@ export default function Preferences() {
         }
       });
       console.log("[client] GET /api/user/preferences resp:", res.data);
-      setPreferences(res.data.data || res.data);
-      setLocalTags(Array.isArray((res.data.data || res.data).tags) ? (res.data.data || res.data).tags : []);
+      
+      const responseData = res.data.data || res.data;
+      console.log("🔍 [DEBUG] fetchPreferences - responseData:", responseData);
+      console.log("🔍 [DEBUG] fetchPreferences - responseData.tags:", responseData.tags);
+      console.log("🔍 [DEBUG] fetchPreferences - Array.isArray(responseData.tags):", Array.isArray(responseData.tags));
+      
+      setPreferences(responseData);
+      
+      const tags = Array.isArray(responseData.tags) ? responseData.tags : [];
+      console.log("🔍 [DEBUG] fetchPreferences - 설정할 tags:", tags);
+      setLocalTags(tags);
+      
       // existingRatingsMap은 기존 것을 유지하고, 새로운 평가만 추가
       setExistingRatingsMap(prev => ({
         ...prev,
-        ...((res.data.data || res.data).ratings || {})
+        ...(responseData.ratings || {})
       }));
       setHasPreferences(true);
       // 네비게이션 동기화를 위한 플래그/이벤트
@@ -148,6 +158,7 @@ export default function Preferences() {
         const tagCount = {};
         const map = {};
         const foods = res.data || [];
+        console.log("🔍 [DEBUG] loadTags - foods.length:", foods.length);
         setAllFoods(foods);
         foods.forEach(food => {
           if (Array.isArray(food.tags)) {
@@ -163,6 +174,8 @@ export default function Preferences() {
         const sorted = Object.entries(tagCount)
           .sort((a,b) => b[1] - a[1])
           .map(([t]) => t);
+        console.log("🔍 [DEBUG] loadTags - sorted tags:", sorted);
+        console.log("🔍 [DEBUG] loadTags - sorted.length:", sorted.length);
         setAllTags(sorted);
         setNameToCategory(map);
       } catch (e) {
@@ -187,27 +200,95 @@ export default function Preferences() {
     });
   };
 
+  // 공통 태그를 사용하는 다른 4점 이상 음식이 있는지 확인하는 함수
+  const getTagsUsedByOtherHighRatedFoods = (excludeFoodId) => {
+    const otherHighRatedTags = new Set();
+    
+    Object.entries(preferences.ratings).forEach(([id, ratingData]) => {
+      if (id !== excludeFoodId && ratingData.rating >= 4) {
+        const food = allFoods.find(f => f._id === id);
+        if (food && Array.isArray(food.tags)) {
+          food.tags.forEach(tag => otherHighRatedTags.add(tag));
+        }
+      }
+    });
+    
+    return otherHighRatedTags;
+  };
+
   // 취향 저장 (PUT)
 const handleSave = async (foodId) => {
   try {
+    const token = localStorage.getItem('token');
+    console.log("🔍 [DEBUG] handleSave - token:", token ? '있음' : '없음');
+    console.log("🔍 [DEBUG] handleSave - foodId:", foodId);
+    console.log("🔍 [DEBUG] handleSave - preferences.ratings[foodId]:", preferences.ratings[foodId]);
+    
     const rating = preferences.ratings[foodId].rating;
     const requestData = {
       foodId,
       rating,
     };
     console.log("[client] PUT /api/user/preferences req:", requestData);
-    const res = await axios.put("http://localhost:4000/api/user/preferences", requestData);
-      console.log("[client] PUT /api/user/preferences resp:", res.data);
-      // preferences 상태 즉시 업데이트
-      setPreferences(prev => ({
-        ...prev,
-        ratings: {
-          ...prev.ratings,
-          [foodId]: { ...prev.ratings[foodId], rating }
+    
+    const res = await axios.put("http://localhost:4000/api/user/preferences", requestData, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    console.log("[client] PUT /api/user/preferences resp:", res.data);
+    
+    // 4점 이상/이하에 따라 태그 추가/제거
+    const food = allFoods.find(f => f._id === foodId);
+    if (food && Array.isArray(food.tags)) {
+      let updatedTags = [...localTags];
+      
+      if (rating >= 4) {
+        // 4점 이상: 해당 음식의 태그 추가 (중복 제거)
+        const newTags = food.tags.filter(tag => !localTags.includes(tag));
+        if (newTags.length > 0) {
+          updatedTags = [...localTags, ...newTags];
+          setLocalTags(updatedTags);
+          console.log("🔍 [DEBUG] handleSave - 4점 이상으로 태그 추가, 새로 추가된 태그:", newTags);
         }
-      }));
+      } else {
+        // 4점 이하: 해당 음식의 태그 제거 (단, 다른 4점 이상 음식에서 사용하는 태그는 제거하지 않음)
+        const otherHighRatedTags = getTagsUsedByOtherHighRatedFoods(foodId);
+        const tagsToRemove = food.tags.filter(tag => !otherHighRatedTags.has(tag));
+        
+        updatedTags = localTags.filter(tag => !tagsToRemove.includes(tag));
+        setLocalTags(updatedTags);
+        console.log("🔍 [DEBUG] handleSave - 4점 이하로 태그 제거, 제거할 태그:", tagsToRemove);
+        console.log("🔍 [DEBUG] handleSave - 보호된 공통 태그:", Array.from(otherHighRatedTags));
+        console.log("🔍 [DEBUG] handleSave - 최종 태그:", updatedTags);
+      }
+      
+      // 백엔드에도 태그 업데이트 반영
+      const updateTagsData = {
+        categories: preferences.categories,
+        ratings: { ...preferences.ratings, [foodId]: { ...preferences.ratings[foodId], rating } },
+        customFoods: preferences.customFoods,
+        tags: updatedTags,
+      };
+      
+      await axios.post("http://localhost:4000/api/user/preferences", updateTagsData, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+    }
+    
+    // preferences 상태 즉시 업데이트
+    setPreferences(prev => ({
+      ...prev,
+      ratings: {
+        ...prev.ratings,
+        [foodId]: { ...prev.ratings[foodId], rating }
+      }
+    }));
   } catch (err) {
     console.error("취향 저장 실패:", err);
+    console.error("🔍 [DEBUG] handleSave - 오류 상세:", err.response?.data);
   }
 };
 
@@ -215,12 +296,45 @@ const handleSave = async (foodId) => {
   const handleDelete = async (foodId) => {
     try {
       const token = localStorage.getItem('token');
+      
+      // 삭제할 음식의 태그 정보 확인
+      const food = allFoods.find(f => f._id === foodId);
+      const deletedRating = preferences.ratings[foodId];
+      
       await axios.delete("http://localhost:4000/api/user/preferences", {
         headers: {
           'Authorization': `Bearer ${token}`
         },
         data: { foodId },
       });
+      
+      // 4점 이상이었던 음식이면 해당 음식의 태그를 제거 (단, 다른 4점 이상 음식에서 사용하는 태그는 제거하지 않음)
+      if (deletedRating && deletedRating.rating >= 4 && food && Array.isArray(food.tags)) {
+        const otherHighRatedTags = getTagsUsedByOtherHighRatedFoods(foodId);
+        const tagsToRemove = food.tags.filter(tag => !otherHighRatedTags.has(tag));
+        const updatedTags = localTags.filter(tag => !tagsToRemove.includes(tag));
+        setLocalTags(updatedTags);
+        
+        // 백엔드에도 태그 업데이트 반영
+        const updatedRatings = { ...preferences.ratings };
+        delete updatedRatings[foodId];
+        
+        const updateTagsData = {
+          categories: preferences.categories,
+          ratings: updatedRatings,
+          customFoods: preferences.customFoods,
+          tags: updatedTags,
+        };
+        
+        console.log("🔍 [DEBUG] handleDelete - 4점 이상 음식 삭제로 태그 제거, 제거할 태그:", tagsToRemove);
+        console.log("🔍 [DEBUG] handleDelete - 보호된 공통 태그:", Array.from(otherHighRatedTags));
+        console.log("🔍 [DEBUG] handleDelete - 최종 태그:", updatedTags);
+        await axios.post("http://localhost:4000/api/user/preferences", updateTagsData, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+      }
       
       // existingRatingsMap에서도 제거
       setExistingRatingsMap(prev => {
@@ -255,6 +369,9 @@ const handleSave = async (foodId) => {
 
   const handleSaveTags = async () => {
     try {
+      console.log("🔍 [DEBUG] handleSaveTags - localTags:", localTags);
+      console.log("🔍 [DEBUG] handleSaveTags - preferences:", preferences);
+      
       const token = localStorage.getItem('token');
       const reqBody = {
         categories: preferences.categories,
@@ -291,9 +408,16 @@ const handleSave = async (foodId) => {
       
       const { category, tags } = gptResponse.data;
       
-      // 생성된 태그를 localTags에 추가
-      const newTags = [...new Set([...localTags, ...tags])];
-      setLocalTags(newTags);
+      // 4점 이상 평가한 경우에만 GPT 태그를 추가
+      let newTags = [...localTags];
+      if (newRating >= 4) {
+        const newTagsFromGPT = tags.filter(tag => !localTags.includes(tag));
+        if (newTagsFromGPT.length > 0) {
+          newTags = [...localTags, ...newTagsFromGPT];
+          setLocalTags(newTags);
+          console.log("🔍 [DEBUG] handleAddNewPreference - 4점 이상으로 GPT 태그 추가, 새로 추가된 태그:", newTagsFromGPT);
+        }
+      }
       
       // 카테고리도 추가 (중복 제거)
       const updatedCategories = [...new Set([...preferences.categories, category])];
@@ -394,11 +518,34 @@ const handleSave = async (foodId) => {
       const newRatingObj = { name: food.name, rating };
       const updatedRatings = { ...preferences.ratings, [food._id]: newRatingObj };
       
+      // 4점 이상/이하에 따라 태그 추가/제거
+      let updatedTags = [...localTags];
+      if (Array.isArray(food.tags)) {
+        if (rating >= 4) {
+          // 4점 이상: 해당 음식의 태그 추가 (중복 제거)
+          const newTags = food.tags.filter(tag => !localTags.includes(tag));
+          if (newTags.length > 0) {
+            updatedTags = [...localTags, ...newTags];
+            setLocalTags(updatedTags);
+            console.log("🔍 [DEBUG] handleSaveUnrated - 4점 이상으로 태그 추가, 새로 추가된 태그:", newTags);
+          }
+        } else {
+          // 4점 이하: 해당 음식의 태그 제거 (단, 다른 4점 이상 음식에서 사용하는 태그는 제거하지 않음)
+          const otherHighRatedTags = getTagsUsedByOtherHighRatedFoods(food._id);
+          const tagsToRemove = food.tags.filter(tag => !otherHighRatedTags.has(tag));
+          updatedTags = localTags.filter(tag => !tagsToRemove.includes(tag));
+          setLocalTags(updatedTags);
+          console.log("🔍 [DEBUG] handleSaveUnrated - 4점 이하로 태그 제거, 제거할 태그:", tagsToRemove);
+          console.log("🔍 [DEBUG] handleSaveUnrated - 보호된 공통 태그:", Array.from(otherHighRatedTags));
+          console.log("🔍 [DEBUG] handleSaveUnrated - 최종 태그:", updatedTags);
+        }
+      }
+      
       const requestData = {
         categories: preferences.categories,
         ratings: updatedRatings,
         customFoods: preferences.customFoods,
-        tags: localTags,
+        tags: updatedTags,
       };
       
       console.log("[client] POST /api/user/preferences (unrated) req:", requestData);
@@ -423,7 +570,8 @@ const handleSave = async (foodId) => {
       // preferences 상태도 즉시 업데이트 (fetchPreferences 호출하지 않음)
       setPreferences(prev => ({
         ...prev,
-        ratings: updatedRatings
+        ratings: updatedRatings,
+        tags: updatedTags
       }));
     } catch (e) {
       console.error("미평가 음식 저장 실패:", e);
@@ -443,6 +591,22 @@ const handleSave = async (foodId) => {
       {tab === 'tags' && (
       <Section>
         <h3>태그 라이브러리</h3>
+        {/* 디버깅 정보 */}
+        <div style={{ 
+          padding: '0.5rem', 
+          backgroundColor: '#f0f9ff', 
+          border: '1px solid #0ea5e9', 
+          borderRadius: '4px', 
+          marginBottom: '1rem',
+          fontSize: '0.9rem'
+        }}>
+          <strong>🔍 디버깅 정보:</strong><br/>
+          allTags.length: {allTags.length}<br/>
+          localTags: {JSON.stringify(localTags)}<br/>
+          tagSearch: "{tagSearch}"<br/>
+          필터링된 태그 수: {allTags.filter(t => !tagSearch || t.includes(tagSearch.trim().toLowerCase())).length}
+        </div>
+        
         <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
           <Input
             type="text"
@@ -457,18 +621,29 @@ const handleSave = async (foodId) => {
         <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
           {allTags
             .filter(t => !tagSearch || t.includes(tagSearch.trim().toLowerCase()))
-            .map((tag, idx) => (
-            <button
-              key={idx}
-              onClick={() => setLocalTags(prev => prev.includes(tag) ? prev.filter(x=>x!==tag) : [...prev, tag])}
-              style={{
-                padding:'6px 10px', borderRadius:999,
-                border:`1px solid ${localTags.includes(tag)?'#059669':'#cbd5e1'}`,
-                background: localTags.includes(tag)?'#059669':'#fff',
-                color: localTags.includes(tag)?'#fff':'#0f172a'
-              }}
-            >#{tag}</button>
-          ))}
+            .map((tag, idx) => {
+              const isSelected = localTags.includes(tag);
+              console.log(`🔍 태그 "${tag}" - 선택됨: ${isSelected}, localTags:`, localTags);
+              return (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    console.log(`🔍 태그 "${tag}" 클릭 - 현재 선택됨: ${isSelected}`);
+                    setLocalTags(prev => {
+                      const newTags = prev.includes(tag) ? prev.filter(x=>x!==tag) : [...prev, tag];
+                      console.log(`🔍 새로운 localTags:`, newTags);
+                      return newTags;
+                    });
+                  }}
+                  style={{
+                    padding:'6px 10px', borderRadius:999,
+                    border:`1px solid ${isSelected?'#059669':'#cbd5e1'}`,
+                    background: isSelected?'#059669':'#fff',
+                    color: isSelected?'#fff':'#0f172a'
+                  }}
+                >#{tag}</button>
+              );
+            })}
         </div>
         <div style={{ marginTop:8 }}>
           <Button onClick={handleSaveTags}>태그 변경 저장</Button>
@@ -478,6 +653,9 @@ const handleSave = async (foodId) => {
       {tab === 'tags' && (
       <Section>
         <h3>내 태그</h3>
+        <div style={{ color:'#64748b', fontSize:'0.9rem', marginBottom:'1rem' }}>
+          💡 4점 이상으로 평가한 음식의 태그가 자동으로 추가되고, 4점 이하로 내려가면 자동으로 제거됩니다
+        </div>
         <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:8 }}>
           {localTags.map((tag, idx) => (
             <span key={idx} style={{
@@ -554,22 +732,34 @@ const handleSave = async (foodId) => {
           ⭐ 평가한 음식
         </h3>
         {filteredEntries.length > 0 ? (
-          filteredEntries.map(([foodId, obj]) => (
-            <Row key={foodId}>
-              <div>
-                <div style={{ fontWeight: 600 }}>{obj.name}</div>
-              </div>
-              <Controls>
-                <StarRating
-                  value={obj.rating}
-                  onChange={(v) => handleRatingChange(foodId, v)}
-                  size={20}
-                />
-                <Button onClick={() => handleSave(foodId)}>저장</Button>
-                <Button onClick={() => handleDelete(foodId)} style={{ background:'#ef4444', borderColor:'#ef4444' }}>삭제</Button>
-              </Controls>
-            </Row>
-          ))
+          filteredEntries.map(([foodId, obj]) => {
+            // 해당 음식의 태그 정보 가져오기
+            const food = allFoods.find(f => f._id === foodId);
+            const foodTags = food?.tags || [];
+            const isHighRated = obj.rating >= 4;
+            
+            return (
+              <Row key={foodId}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{obj.name}</div>
+                  {isHighRated && foodTags.length > 0 && (
+                    <div style={{ fontSize: '0.8rem', color: '#059669', marginTop: '0.25rem' }}>
+                      🏷️ 자동 추가된 태그: {foodTags.join(', ')}
+                    </div>
+                  )}
+                </div>
+                <Controls>
+                  <StarRating
+                    value={obj.rating}
+                    onChange={(v) => handleRatingChange(foodId, v)}
+                    size={20}
+                  />
+                  <Button onClick={() => handleSave(foodId)}>저장</Button>
+                  <Button onClick={() => handleDelete(foodId)} style={{ background:'#ef4444', borderColor:'#ef4444' }}>삭제</Button>
+                </Controls>
+              </Row>
+            );
+          })
         ) : (
           <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
             아직 평가한 음식이 없습니다. 아래에서 음식을 평가해보세요.

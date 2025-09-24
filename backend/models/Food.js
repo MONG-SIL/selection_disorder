@@ -7,6 +7,7 @@ const foodSchema = new mongoose.Schema({
   price: { type: Number },
   image: { type: String }, // 이미지 URL
   tags: [{ type: String }], // 태그 배열 (예: 매운맛, 해산물, 채식 등)
+  moodTags: [{ type: String }], // 기분 관련 태그 배열 (예: 행복, 슬픔, 스트레스, 피곤함 등)
   rating: { type: Number, min: 0, max: 5, default: 0 },
   isAvailable: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },

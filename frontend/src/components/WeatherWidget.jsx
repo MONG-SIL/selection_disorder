@@ -113,7 +113,7 @@ const RecommendButton = styled.button`
   }
 `;
 
-export default function WeatherWidget({ lat, lon }) {
+export default function WeatherWidget({ lat, lon, onWeatherData }) {
   const [weather, setWeather] = useState(null);
   const [recommendations, setRecommendations] = useState(null);
   const [showRecommendations, setShowRecommendations] = useState(false);
@@ -127,10 +127,17 @@ export default function WeatherWidget({ lat, lon }) {
         .then((res) => {
           console.log("Weather API response:", res.data);
           setWeather(res.data);
+          // 상위 컴포넌트에 날씨 데이터 전달
+          if (onWeatherData) {
+            onWeatherData({
+              temperature: res.data.temp,
+              description: res.data.description
+            });
+          }
         })
         .catch((err) => console.error(err));
     }
-  }, [lat, lon]);
+  }, [lat, lon, onWeatherData]);
 
   const handleShowRecommendations = async (foodType) => {
     if (!weather) return;

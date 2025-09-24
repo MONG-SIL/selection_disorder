@@ -86,6 +86,19 @@ export default function OnboardingPreferences({ onComplete }) {
   const pageSize = 10;
   const [imageCache, setImageCache] = useState({});
 
+  // 토큰에서 사용자 ID를 가져오는 함수
+  const getUserId = () => {
+    const token = localStorage.getItem('token');
+    if (!token) return null;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.userId;
+    } catch (error) {
+      console.error('토큰 파싱 오류:', error);
+      return null;
+    }
+  };
+
   // 컴포넌트 마운트 시 음식 데이터 + 기존 취향 확인
   useEffect(() => {
     const fetchFoods = async () => {
@@ -298,8 +311,11 @@ export default function OnboardingPreferences({ onComplete }) {
       });
       setExistingRatingsMap(newExistingRatings);
       
-      // 네비바와 다른 탭 동기화
-      window.localStorage.setItem('hasPreferences', 'true');
+      // 네비바와 다른 탭 동기화 (유저별 구분)
+      const userId = getUserId();
+      if (userId) {
+        window.localStorage.setItem(`hasPreferences_${userId}`, 'true');
+      }
       window.dispatchEvent(new Event('preferences-updated'));
       
       // 홈으로 이동

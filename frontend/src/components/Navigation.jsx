@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import styled from "styled-components";
 import { useEffect, useState } from "react";
-import { logout, getToken } from "../services/authApi";
+import { logout, getToken, getUserProfile } from "../services/authApi";
 
 const NavBar = styled.nav`
   position: fixed;
@@ -40,10 +40,32 @@ const LogoutButton = styled.button`
   }
 `;
 
+const UserGreeting = styled.div`
+  color: #374151;
+  font-weight: 500;
+  font-size: 0.9rem;
+  margin-right: auto;
+  margin-left: 1rem;
+`;
+
 export default function Navigation() {
   const [hasPreferences, setHasPreferences] = useState(false);
   const [user, setUser] = useState(null);
+  const [username, setUsername] = useState('');
   const location = useLocation();
+
+  // 토큰에서 사용자 ID를 가져오는 함수
+  const getUserId = () => {
+    const token = getToken();
+    if (!token) return null;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.userId;
+    } catch (error) {
+      console.error('토큰 파싱 오류:', error);
+      return null;
+    }
+  };
 
   useEffect(() => {
     const checkPreferences = async () => {
@@ -68,9 +90,27 @@ export default function Navigation() {
         console.error("취향 확인 실패:", e);
       }
     };
+
+    const fetchUserProfile = async () => {
+      try {
+        const userProfile = await getUserProfile();
+        setUsername(userProfile.user.username);
+      } catch (e) {
+        console.error("사용자 정보 가져오기 실패:", e);
+        // 토큰에서 직접 username 가져오기 (fallback)
+        const userId = getUserId();
+        if (userId) {
+          setUsername(userId);
+        }
+      }
+    };
     
-    // 우선 localStorage 플래그 확인
-    const flag = typeof window !== 'undefined' && window.localStorage?.getItem('hasPreferences') === 'true';
+    // 사용자 정보 가져오기
+    fetchUserProfile();
+    
+    // 우선 localStorage 플래그 확인 (유저별 구분)
+    const userId = getUserId();
+    const flag = typeof window !== 'undefined' && userId && window.localStorage?.getItem(`hasPreferences_${userId}`) === 'true';
     if (flag) {
       setHasPreferences(true);
     } else {
@@ -81,9 +121,9 @@ export default function Navigation() {
     const onUpdated = () => setHasPreferences(true);
     window.addEventListener('preferences-updated', onUpdated);
 
-    // 다른 탭에서의 변경 반영
+    // 다른 탭에서의 변경 반영 (유저별 구분)
     const onStorage = (ev) => {
-      if (ev.key === 'hasPreferences') {
+      if (ev.key === `hasPreferences_${userId}`) {
         setHasPreferences(ev.newValue === 'true');
       }
     };
@@ -95,9 +135,10 @@ export default function Navigation() {
     };
   }, []);
 
-  // 라우트 변경 시에도 한 번 더 동기화
+  // 라우트 변경 시에도 한 번 더 동기화 (유저별 구분)
   useEffect(() => {
-    const flag = typeof window !== 'undefined' && window.localStorage?.getItem('hasPreferences') === 'true';
+    const userId = getUserId();
+    const flag = typeof window !== 'undefined' && userId && window.localStorage?.getItem(`hasPreferences_${userId}`) === 'true';
     setHasPreferences(flag);
   }, [location]);
 
@@ -112,12 +153,14 @@ export default function Navigation() {
       <NavLink to="/">Home</NavLink>
       <NavLink to="/weather">Weather</NavLink>
       <NavLink to="/food">Food Menu</NavLink>
+      <NavLink to="/recommend">Recommend</NavLink>
       {hasPreferences ? (
         <NavLink to="/preferences">My</NavLink>
       ) : (
         <NavLink to="/onboarding">Preferences</NavLink>
       )}
       <NavLink to="/onboarding">Add Preferences</NavLink>
+      {username && <UserGreeting>{username}님 안녕하세요!</UserGreeting>}
       <LogoutButton onClick={handleLogout}>로그아웃</LogoutButton>
     </NavBar>
   );

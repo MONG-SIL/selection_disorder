@@ -79,8 +79,27 @@ export const login = async (credentials) => {
   }
 };
 
+// 토큰에서 사용자 ID를 가져오는 함수
+const getUserId = () => {
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.userId;
+  } catch (error) {
+    console.error('토큰 파싱 오류:', error);
+    return null;
+  }
+};
+
 // 로그아웃
 export const logout = () => {
+  // 유저별 localStorage 정리
+  const userId = getUserId();
+  if (userId) {
+    localStorage.removeItem(`hasPreferences_${userId}`);
+  }
+  
   removeToken();
   window.location.href = '/login';
 };

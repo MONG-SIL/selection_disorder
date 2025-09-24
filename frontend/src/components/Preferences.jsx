@@ -132,8 +132,11 @@ export default function Preferences() {
         ...(responseData.ratings || {})
       }));
       setHasPreferences(true);
-      // 네비게이션 동기화를 위한 플래그/이벤트
-      window.localStorage.setItem('hasPreferences', 'true');
+      // 네비게이션 동기화를 위한 플래그/이벤트 (유저별 구분)
+      const userId = getUserId();
+      if (userId) {
+        window.localStorage.setItem(`hasPreferences_${userId}`, 'true');
+      }
       window.dispatchEvent(new Event('preferences-updated'));
     } catch (err) {
       if (err.response?.status === 404) {
@@ -388,7 +391,10 @@ const handleSave = async (foodId) => {
       console.log("[client] POST /api/user/preferences resp:", res.data);
       // 응답에 tags가 누락되는 상황에서도 UI는 즉시 반영
       setPreferences(prev => ({ ...prev, tags: [...localTags] }));
-      window.localStorage.setItem('hasPreferences', 'true');
+      const userId = getUserId();
+      if (userId) {
+        window.localStorage.setItem(`hasPreferences_${userId}`, 'true');
+      }
       window.dispatchEvent(new Event('preferences-updated'));
     } catch (err) {
       console.error("태그 저장 실패:", err);
@@ -448,7 +454,10 @@ const handleSave = async (foodId) => {
         customFoods: updatedCustomFoods,
         tags: newTags
       }));
-      window.localStorage.setItem('hasPreferences', 'true');
+      const userId = getUserId();
+      if (userId) {
+        window.localStorage.setItem(`hasPreferences_${userId}`, 'true');
+      }
       window.dispatchEvent(new Event('preferences-updated'));
     } catch (err) {
       console.error("새 취향 추가 실패:", err);

@@ -10,6 +10,8 @@ import popularFoodsRoutes from "./routes/popularFoods.js";
 import foodImagesRoutes from "./routes/foodImages.js";
 import foodRecipesRoutes from "./routes/foodRecipes.js";
 import weatherRecommendRoutes from "./routes/weatherRecommend.js";
+import moodRecommendRoutes from "./routes/moodRecommend.js";
+import integratedRecommendRoutes from "./routes/integratedRecommend.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import fs from "fs";
@@ -35,6 +37,8 @@ app.use("/api", popularFoodsRoutes);
 app.use("/api/food-images", foodImagesRoutes);
 app.use("/api/food-recipes", foodRecipesRoutes);
 app.use("/api/weather-recommend", weatherRecommendRoutes);
+app.use("/api/mood-recommend", moodRecommendRoutes);
+app.use("/api/integrated-recommend", integratedRecommendRoutes);
 
 
 // 인기 음식 라우트는 별도 파일에서 제공됨

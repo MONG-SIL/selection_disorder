@@ -10,10 +10,15 @@ router.get("/", authenticateToken, (req, res) => {
   const userId = req.user.userId;
   
   if (!preferencesDB[userId]) {
-    return res.status(404).json({ 
-      success: false, 
-      message: "No preferences found",
-      data: null 
+    // 선호도가 없으면 빈 선호도 객체 반환
+    return res.json({ 
+      success: true, 
+      data: {
+        categories: [],
+        ratings: {},
+        customFoods: [],
+        tags: []
+      }
     });
   }
   

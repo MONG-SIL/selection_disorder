@@ -67,12 +67,9 @@ const FoodRecommend = ({ weatherData, token }) => {
           key={idx}
           className="flex items-center mb-4 pb-3 border-b border-gray-200"
         >
-          <img
-            src={food.thumbnail}
-            alt={food.title}
-            width={120}
-            className="rounded-lg mr-4"
-          />
+          <div className="w-30 h-20 mr-4 rounded-lg bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white font-bold text-lg">
+            🍽️
+          </div>
           <p className="text-base font-medium">{food.title}</p>
         </li>
       );

@@ -1,33 +1,30 @@
 import Food from "../models/Food.js";
 import axios from "axios";
 
+// 사용자 선호도 데이터 (실제로는 데이터베이스에서 가져와야 함)
+let preferencesDB = {};
+
 // 통합 추천 알고리즘 - 날씨, 기분, 인기도를 종합한 추천
 export const getIntegratedRecommendations = async (req, res) => {
   try {
-    const { 
-      temperature, 
-      weatherDescription, 
-      mood, 
-      foodType = "main",
-      weights = { weather: 0.4, mood: 0.4, popularity: 0.2 } // 가중치 설정
-    } = req.query;
-    const userId = req.user?.userId;
+    console.log("통합 추천 API 호출됨");
+    
+    const { temperature, weatherDescription, mood, foodType = "main" } = req.query;
+
+    console.log("받은 파라미터:", { temperature, weatherDescription, mood, foodType });
 
     // 필수 파라미터 검증
     if (!temperature || !weatherDescription || !mood) {
+      console.log("필수 파라미터 누락:", { temperature, weatherDescription, mood });
       return res.status(400).json({
         success: false,
-        message: "온도, 날씨 설명, 기분이 모두 필요합니다."
+        message: "온도, 날씨 설명, 기분이 모두 필요합니다.",
+        received: { temperature, weatherDescription, mood, foodType }
       });
     }
 
-    const temp = parseFloat(temperature);
-    const weatherDesc = weatherDescription.toLowerCase();
-    const moodKey = mood.toLowerCase();
-
     // 음식 타입에 따라 필터링
     let foodFilter = { isAvailable: true };
-    
     if (foodType === "dessert") {
       foodFilter.category = "디저트";
     } else {
@@ -36,119 +33,107 @@ export const getIntegratedRecommendations = async (req, res) => {
 
     // 모든 음식 가져오기
     const allFoods = await Food.find(foodFilter);
+    console.log("음식 데이터 개수:", allFoods.length);
 
-    // 1. 날씨 기반 점수 계산
-    const weatherScores = calculateWeatherScores(allFoods, temp, weatherDesc);
-    
-    // 2. 기분 기반 점수 계산
-    const moodScores = calculateMoodScores(allFoods, moodKey);
-    
-    // 3. 인기도 기반 점수 계산
-    const popularityScores = await calculatePopularityScores(allFoods);
-
-    // 4. 통합 점수 계산
-    const integratedScores = allFoods.map(food => {
-      const weatherScore = weatherScores[food._id] || 0;
-      const moodScore = moodScores[food._id] || 0;
-      const popularityScore = popularityScores[food._id] || 0;
-      
-      // 가중치 적용
-      const finalScore = 
-        (weatherScore * weights.weather) + 
-        (moodScore * weights.mood) + 
-        (popularityScore * weights.popularity);
-
-      return {
-        food,
-        weatherScore,
-        moodScore,
-        popularityScore,
-        finalScore
-      };
-    });
-
-    // 5. 사용자 선호도 기반 가중치 적용
+    // 사용자 선호도 가져오기
+    const userId = req.user?.userId;
     let userPreferences = null;
-    try {
-      const preferencesResponse = await axios.get(`http://localhost:4000/api/user/preferences`, {
-        params: { userId }
-      });
-      userPreferences = preferencesResponse.data;
-    } catch (error) {
-      console.log("사용자 선호도를 가져올 수 없습니다:", error.message);
+    
+    if (userId) {
+      try {
+        const preferencesResponse = await axios.get(`http://localhost:4000/api/user/preferences`, {
+          headers: { Authorization: req.headers.authorization }
+        });
+        userPreferences = preferencesResponse.data?.data;
+        console.log("사용자 선호도 로드됨:", userPreferences ? "있음" : "없음");
+      } catch (error) {
+        console.log("사용자 선호도 로드 실패:", error.message);
+      }
     }
 
-    // 사용자 취향 가중치 적용
-    const weightedCandidates = integratedScores.map(candidate => {
-      let adjustedScore = candidate.finalScore;
-      
-      if (userPreferences) {
-        // 사용자가 이미 평가한 음식이면 가중치 적용
-        const userRating = userPreferences.ratings?.[candidate.food._id]?.rating;
+    // 사용자 평가 기반 추천 로직
+    const recommendations = allFoods.map(food => {
+      let baseScore = food.rating || 0;
+      let userRatingBonus = 0;
+      let categoryBonus = 0;
+      let tagBonus = 0;
+      let highRatingBonus = 0;
+
+      // 통합 추천에서는 사용자 평가를 적절히 반영하되 균형을 맞춤
+      if (userPreferences && userPreferences.ratings) {
+        const userRating = userPreferences.ratings[food._id]?.rating;
         if (userRating) {
-          adjustedScore *= (userRating / 3); // 3점 기준으로 정규화
-        }
-
-        // 선호하는 카테고리에 가중치 적용
-        if (userPreferences.categories?.includes(candidate.food.category)) {
-          adjustedScore *= 1.3;
-        }
-
-        // 선호하는 태그에 가중치 적용
-        if (userPreferences.tags && candidate.food.tags) {
-          const tagMatches = candidate.food.tags.filter(tag =>
-            userPreferences.tags.some(userTag =>
-              tag.toLowerCase().includes(userTag.toLowerCase()) ||
-              userTag.toLowerCase().includes(tag.toLowerCase())
-            )
-          ).length;
-          if (tagMatches > 0) {
-            adjustedScore *= (1 + tagMatches * 0.2);
+          userRatingBonus = userRating * 1.2; // 사용자 평가 가중치 적절히 조정
+          
+          // 고평가 음식 (4점 이상) 추가 보너스
+          if (userRating >= 4) {
+            highRatingBonus = 2;
           }
         }
       }
 
+      // 선호 카테고리 보너스 (적절히 조정)
+      if (userPreferences && userPreferences.categories?.includes(food.category)) {
+        categoryBonus = 1;
+      }
+
+      // 선호 태그 보너스 (적절히 조정)
+      if (userPreferences && userPreferences.tags && food.tags) {
+        const tagMatches = food.tags.filter(tag =>
+          userPreferences.tags.some(userTag =>
+            tag.toLowerCase().includes(userTag.toLowerCase()) ||
+            userTag.toLowerCase().includes(tag.toLowerCase())
+          )
+        ).length;
+        tagBonus = tagMatches * 0.8;
+      }
+
+      // 날씨 기반 점수 (간단한 로직)
+      const weatherScore = calculateWeatherScore(food, parseFloat(temperature), weatherDescription);
+      
+      // 기분 기반 점수 (간단한 로직)
+      const moodScore = calculateMoodScore(food, mood.toLowerCase());
+
+      // 최종 점수 계산
+      const finalScore = baseScore + userRatingBonus + categoryBonus + tagBonus + highRatingBonus + weatherScore + moodScore;
+
       return {
-        ...candidate,
-        adjustedScore,
-        userRating: userPreferences?.ratings?.[candidate.food._id]?.rating
+        _id: food._id,
+        name: food.name,
+        category: food.category,
+        description: food.description,
+        price: food.price,
+        rating: food.rating,
+        tags: food.tags,
+        moodTags: food.moodTags,
+        image: food.image,
+        scores: {
+          weather: Math.round(weatherScore * 100) / 100,
+          mood: Math.round(moodScore * 100) / 100,
+          popularity: Math.round(baseScore * 100) / 100,
+          userRating: userRatingBonus,
+          categoryBonus: categoryBonus,
+          tagBonus: tagBonus,
+          highRatingBonus: highRatingBonus,
+          final: Math.round(finalScore * 100) / 100
+        },
+        userRating: userPreferences?.ratings?.[food._id]?.rating
       };
     });
 
-    // 최종 점수순으로 정렬하고 상위 5개 선택
-    const finalRecommendations = weightedCandidates
-      .sort((a, b) => b.adjustedScore - a.adjustedScore)
-      .slice(0, 5);
+    // 최종 점수순으로 정렬
+    recommendations.sort((a, b) => b.scores.final - a.scores.final);
 
     res.json({
       success: true,
       data: {
         context: {
-          temperature: temp,
+          temperature: parseFloat(temperature),
           weatherDescription: weatherDescription,
-          mood: moodKey,
-          foodType: foodType,
-          weights: weights
+          mood: mood.toLowerCase(),
+          foodType: foodType
         },
-        recommendations: finalRecommendations.map(rec => ({
-          _id: rec.food._id,
-          name: rec.food.name,
-          category: rec.food.category,
-          description: rec.food.description,
-          price: rec.food.price,
-          rating: rec.food.rating,
-          tags: rec.food.tags,
-          moodTags: rec.food.moodTags,
-          image: rec.food.image,
-          scores: {
-            weather: Math.round(rec.weatherScore * 100) / 100,
-            mood: Math.round(rec.moodScore * 100) / 100,
-            popularity: Math.round(rec.popularityScore * 100) / 100,
-            final: Math.round(rec.finalScore * 100) / 100,
-            adjusted: Math.round(rec.adjustedScore * 100) / 100
-          },
-          userRating: rec.userRating
-        })),
+        recommendations: recommendations.slice(0, 5),
         totalCandidates: allFoods.length
       }
     });
@@ -163,7 +148,69 @@ export const getIntegratedRecommendations = async (req, res) => {
   }
 };
 
-// 날씨 기반 점수 계산 함수
+// 간단한 날씨 기반 점수 계산
+function calculateWeatherScore(food, temperature, weatherDescription) {
+  let score = 0;
+  
+  // 온도 기반 점수
+  if (temperature < 5) {
+    // 추운 날씨 - 따뜻한 음식 선호
+    if (food.tags?.some(tag => ['따뜻한', '국물', '보양'].includes(tag))) {
+      score += 2;
+    }
+  } else if (temperature > 25) {
+    // 더운 날씨 - 차가운 음식 선호
+    if (food.tags?.some(tag => ['차가움', '시원한'].includes(tag))) {
+      score += 2;
+    }
+  }
+  
+  // 날씨 설명 기반 점수
+  if (weatherDescription.includes('비') || weatherDescription.includes('rain')) {
+    if (food.tags?.some(tag => ['따뜻한', '국물', '매운맛'].includes(tag))) {
+      score += 1.5;
+    }
+  } else if (weatherDescription.includes('맑') || weatherDescription.includes('sunny')) {
+    if (food.tags?.some(tag => ['신선한', '건강한'].includes(tag))) {
+      score += 1.5;
+    }
+  }
+  
+  return score;
+}
+
+// 간단한 기분 기반 점수 계산
+function calculateMoodScore(food, mood) {
+  let score = 0;
+  
+  const moodRules = {
+    happy: ['달콤한', '달콤', '달콤함'],
+    excited: ['매운맛', '매운', '얼큰한', '자극적인'],
+    relaxed: ['부드러운', '담백한', '가벼운', '건강한'],
+    sad: ['달콤한', '달콤', '따뜻한'],
+    stressed: ['매운맛', '매운', '얼큰한', '자극적인', '따뜻한'],
+    tired: ['따뜻한', '보양', '영양', '에너지', '달콤한'],
+    angry: ['매운맛', '매운', '얼큰한', '자극적인', '따뜻한'],
+    neutral: ['담백한', '가벼운', '건강한', '신선한'],
+    hungry: ['든든한', '포만감', '영양', '고기', '면요리']
+  };
+  
+  const preferredTags = moodRules[mood] || [];
+  
+  if (food.tags) {
+    const tagMatches = food.tags.filter(tag =>
+      preferredTags.some(preferredTag =>
+        tag.toLowerCase().includes(preferredTag.toLowerCase()) ||
+        preferredTag.toLowerCase().includes(tag.toLowerCase())
+      )
+    ).length;
+    score += tagMatches * 1.5;
+  }
+  
+  return score;
+}
+
+// 날씨 기반 점수 계산 함수 (기존 함수)
 function calculateWeatherScores(foods, temperature, weatherDescription) {
   const scores = {};
   
@@ -309,14 +356,12 @@ async function calculatePopularityScores(foods) {
   const scores = {};
   
   try {
-    // 인기 음식 API 호출
-    const response = await axios.get("http://localhost:4000/api/popular-foods");
-    const popularFoods = response.data || [];
-    
-    // 인기 음식 제목에서 키워드 추출
-    const popularKeywords = popularFoods.flatMap(food => 
-      food.title ? food.title.toLowerCase().split(/[\s,]+/) : []
-    ).filter(keyword => keyword.length > 1);
+    // 기본 인기 음식 키워드 (실제 인기 음식 데이터 기반)
+    const popularKeywords = [
+      "김치찌개", "파스타", "떡볶이", "라면", "아이스크림", "샐러드", "연어", "케이크",
+      "한식", "양식", "디저트", "매운맛", "달콤한", "따뜻한", "차가움", "면요리", "국물",
+      "food", "cooking", "recipe", "delicious", "spicy", "sweet", "warm", "cold"
+    ];
 
     // 각 음식에 대해 인기도 점수 계산
     foods.forEach(food => {
@@ -326,7 +371,7 @@ async function calculatePopularityScores(foods) {
       const foodNameWords = food.name.toLowerCase().split(/[\s,]+/);
       const nameMatches = foodNameWords.filter(word => 
         popularKeywords.some(keyword => 
-          word.includes(keyword) || keyword.includes(word)
+          word.includes(keyword.toLowerCase()) || keyword.toLowerCase().includes(word)
         )
       ).length;
       score += nameMatches * 2;
@@ -335,10 +380,23 @@ async function calculatePopularityScores(foods) {
       if (food.tags) {
         const tagMatches = food.tags.filter(tag => 
           popularKeywords.some(keyword => 
-            tag.toLowerCase().includes(keyword) || keyword.includes(tag.toLowerCase())
+            tag.toLowerCase().includes(keyword.toLowerCase()) || keyword.toLowerCase().includes(tag.toLowerCase())
           )
         ).length;
         score += tagMatches * 1.5;
+      }
+
+      // 카테고리별 인기도 가중치
+      const categoryWeights = {
+        "한식": 1.2,
+        "양식": 1.1,
+        "일식": 1.0,
+        "중식": 1.0,
+        "디저트": 1.3
+      };
+      
+      if (categoryWeights[food.category]) {
+        score *= categoryWeights[food.category];
       }
 
       // 기본 평점 반영

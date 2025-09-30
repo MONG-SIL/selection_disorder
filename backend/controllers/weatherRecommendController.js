@@ -171,15 +171,13 @@ export const getWeatherBasedRecommendations = async (req, res) => {
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
 
-    // 사용자 취향 기반 가중치 적용 (사용자 선호도 API 호출)
+    // 사용자 취향 기반 가중치 적용
     let userPreferences = null;
     try {
-      // 실제로는 사용자 선호도 API를 호출해야 하지만, 
-      // 현재는 기본 사용자 ID로 가정
       const preferencesResponse = await axios.get(`http://localhost:4000/api/user/preferences`, {
-        params: { userId }
+        headers: { Authorization: req.headers.authorization }
       });
-      userPreferences = preferencesResponse.data;
+      userPreferences = preferencesResponse.data?.data;
     } catch (error) {
       console.log("사용자 선호도를 가져올 수 없습니다:", error.message);
     }
@@ -187,20 +185,29 @@ export const getWeatherBasedRecommendations = async (req, res) => {
     // 사용자 취향 가중치 적용
     const weightedCandidates = topCandidates.map(candidate => {
       let finalScore = candidate.score;
+      let userRatingBonus = 0;
+      let categoryBonus = 0;
+      let tagBonus = 0;
+      let highRatingBonus = 0;
       
       if (userPreferences) {
-        // 사용자가 이미 평가한 음식이면 가중치 적용
+        // 날씨 기반 추천에서는 날씨 점수를 우선하고 사용자 평가는 보조적으로만 적용
         const userRating = userPreferences.ratings?.[candidate.food._id]?.rating;
         if (userRating) {
-          finalScore *= (userRating / 3); // 3점 기준으로 정규화
+          userRatingBonus = userRating * 0.5; // 사용자 평가 가중치 대폭 감소
+          
+          // 고평가 음식 (4점 이상) 추가 보너스도 감소
+          if (userRating >= 4) {
+            highRatingBonus = 1;
+          }
         }
 
-        // 선호하는 카테고리에 가중치 적용
+        // 선호하는 카테고리에 가중치 적용 (감소)
         if (userPreferences.categories?.includes(candidate.food.category)) {
-          finalScore *= 1.5;
+          categoryBonus = 0.5;
         }
 
-        // 선호하는 태그에 가중치 적용
+        // 선호하는 태그에 가중치 적용 (감소)
         if (userPreferences.tags && candidate.food.tags) {
           const tagMatches = candidate.food.tags.filter(tag =>
             userPreferences.tags.some(userTag =>
@@ -208,16 +215,23 @@ export const getWeatherBasedRecommendations = async (req, res) => {
               userTag.toLowerCase().includes(tag.toLowerCase())
             )
           ).length;
-          if (tagMatches > 0) {
-            finalScore *= (1 + tagMatches * 0.3);
-          }
+          tagBonus = tagMatches * 0.3;
         }
       }
+
+      finalScore += userRatingBonus + categoryBonus + tagBonus + highRatingBonus;
 
       return {
         ...candidate,
         finalScore,
-        userRating: userPreferences?.ratings?.[candidate.food._id]?.rating
+        userRating: userPreferences?.ratings?.[candidate.food._id]?.rating,
+        scores: {
+          ...candidate.scores,
+          userRating: userRatingBonus,
+          categoryBonus: categoryBonus,
+          tagBonus: tagBonus,
+          highRatingBonus: highRatingBonus
+        }
       };
     });
 

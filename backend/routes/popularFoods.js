@@ -7,46 +7,46 @@ const router = express.Router();
 // 인기 음식 데이터 조회 (YouTube API 또는 기본 데이터)
 router.get("/popular-foods", async (req, res) => {
   try {
-    // 기본 인기 음식 데이터
+    // 기본 인기 음식 데이터 (이미지 없이 아이콘으로 표시)
     const defaultFoods = [
       {
         title: "맛있는 김치찌개 만들기",
-        thumbnail: "https://via.placeholder.com/120x90/FF6B6B/FFFFFF?text=김치찌개",
+        thumbnail: null, // 이미지 없음 - 프론트엔드에서 아이콘 표시
         tags: ["한식", "찌개", "김치", "따뜻한"]
       },
       {
         title: "간단한 파스타 레시피",
-        thumbnail: "https://via.placeholder.com/120x90/4ECDC4/FFFFFF?text=파스타",
+        thumbnail: null,
         tags: ["양식", "파스타", "면요리", "간단"]
       },
       {
         title: "달콤한 초콜릿 케이크",
-        thumbnail: "https://via.placeholder.com/120x90/45B7D1/FFFFFF?text=케이크",
+        thumbnail: null,
         tags: ["디저트", "케이크", "초콜릿", "달콤한"]
       },
       {
         title: "매운 떡볶이 만들기",
-        thumbnail: "https://via.placeholder.com/120x90/FFA07A/FFFFFF?text=떡볶이",
+        thumbnail: null,
         tags: ["한식", "떡볶이", "매운맛", "간식"]
       },
       {
         title: "신선한 샐러드 레시피",
-        thumbnail: "https://via.placeholder.com/120x90/98D8C8/FFFFFF?text=샐러드",
+        thumbnail: null,
         tags: ["양식", "샐러드", "건강한", "신선한"]
       },
       {
         title: "부드러운 연어 스테이크",
-        thumbnail: "https://via.placeholder.com/120x90/F7DC6F/FFFFFF?text=연어",
+        thumbnail: null,
         tags: ["양식", "연어", "스테이크", "고급"]
       },
       {
         title: "얼큰한 라면 끓이기",
-        thumbnail: "https://via.placeholder.com/120x90/BB8FCE/FFFFFF?text=라면",
+        thumbnail: null,
         tags: ["한식", "라면", "얼큰한", "간단"]
       },
       {
         title: "달콤한 아이스크림",
-        thumbnail: "https://via.placeholder.com/120x90/85C1E9/FFFFFF?text=아이스크림",
+        thumbnail: null,
         tags: ["디저트", "아이스크림", "달콤한", "시원한"]
       }
     ];
@@ -131,19 +131,19 @@ router.get("/popular-foods", async (req, res) => {
   } catch (err) {
     console.error("인기 음식 API 에러:", err);
     
-    // 에러 발생 시에도 기본 데이터 반환
-    const fallbackFoods = [
-      {
-        title: "맛있는 김치찌개 만들기",
-        thumbnail: "https://via.placeholder.com/120x90/FF6B6B/FFFFFF?text=김치찌개",
-        tags: ["한식", "찌개", "김치"]
-      },
-      {
-        title: "간단한 파스타 레시피",
-        thumbnail: "https://via.placeholder.com/120x90/4ECDC4/FFFFFF?text=파스타",
-        tags: ["양식", "파스타", "면요리"]
-      }
-    ];
+        // 에러 발생 시에도 기본 데이터 반환
+        const fallbackFoods = [
+          {
+            title: "맛있는 김치찌개 만들기",
+            thumbnail: null,
+            tags: ["한식", "찌개", "김치"]
+          },
+          {
+            title: "간단한 파스타 레시피",
+            thumbnail: null,
+            tags: ["양식", "파스타", "면요리"]
+          }
+        ];
     
     res.json(fallbackFoods);
   }

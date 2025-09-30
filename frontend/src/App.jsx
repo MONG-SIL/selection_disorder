@@ -33,7 +33,6 @@ const Title = styled.h1`
 
 export default function App() {
   const [position, setPosition] = useState(null);
-  const [weatherData, setWeatherData] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('token'));
 
   useEffect(() => {
@@ -72,7 +71,7 @@ export default function App() {
                   <Route path="/" element={<Title>🍴 음식 추천 서비스</Title>} />
                   <Route
                     path="/weather"
-                    element={position ? <WeatherWidget lat={position.lat} lon={position.lon} onWeatherData={setWeatherData} /> : null}
+                    element={position ? <WeatherWidget lat={position.lat} lon={position.lon} /> : null}
                   />
                   <Route
                     path="/map"
@@ -82,8 +81,8 @@ export default function App() {
                   <Route path="/chat" element={<ChatBox />} />
                   <Route path="/food" element={<FoodList />} />
                   <Route path="/onboarding" element={<OnboardingPreferences />} />
-                  <Route path="/food-recommend" element={<FoodRecommend weatherData={weatherData} token={token} />} />
-                  <Route path="/recommend" element={<RecommendPage weatherData={weatherData} token={token} />} />
+                  <Route path="/food-recommend" element={<FoodRecommend token={token} />} />
+                  <Route path="/recommend" element={<RecommendPage token={token} />} />
                 </Routes>
               </Container>
             </ProtectedRoute>
